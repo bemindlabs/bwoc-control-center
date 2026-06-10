@@ -1,0 +1,28 @@
+# Rust / Tauri
+/target
+src-tauri/target
+**/*.rs.bk
+*.pdb
+
+# Node / frontend
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+
+# Tauri build output
+src-tauri/gen
+/build
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+*.log
+.idea
+.vscode/*
+!.vscode/extensions.json
