@@ -51,6 +51,24 @@ pnpm tauri build && scripts/make-dmg.sh   # release .app + a distributable .dmg
 > builds the same `.dmg` with `hdiutil` only (no Finder) — the `.app` from
 > `tauri build` is always fine; only its DMG layout step is the problem.
 >
+## iOS over-the-air install
+
+The app builds a **signed** `.ipa` for the team's registered devices and serves it
+OTA over the tailnet (no public hosting — iOS just needs HTTPS, which `tailscale
+serve` provides):
+
+```bash
+scripts/ios-build.sh device                                   # signed .ipa
+BASE_URL=https://<host>.<tailnet>.ts.net:10131 scripts/make-ota.sh   # manifest + page → out/ota
+# serve out/ota over HTTPS (macOS: a loopback static server + `tailscale serve`):
+python3 -m http.server 18131 --bind 127.0.0.1 --directory out/ota &
+tailscale serve --bg --https=10131 http://127.0.0.1:18131
+```
+
+Then open `https://<host>.<tailnet>.ts.net:10131/` in **Safari** on a device that is
+(a) one of the provisioning profile's registered devices and (b) on the tailnet, and
+tap **Install**. The dev profile here covers 4 devices, valid until 2027-04.
+
 > **`bwoc` discovery:** the installed app resolves the `bwoc` binary from the
 > well-known install dirs (`/opt/homebrew/bin`, `~/.cargo/bin`, …) because a
 > Finder-launched app has a minimal PATH. Override with `BWOC_BIN`.
