@@ -28,3 +28,6 @@ src-tauri/gen
 .vscode/*
 !.vscode/extensions.json
 cc-signing/target
+
+# OTA / iOS export artifacts
+out/
