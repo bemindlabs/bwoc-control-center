@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎛️ bwoc-control-center — Design Discussion Summary</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --amber: #d29922; --pink: #f778ba; --purple: #bc8cff; --red: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Noto Sans Thai", sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 2.5rem; }
+  header h1 { font-size: 1.9rem; margin: 0 0 .4rem; }
+  header .sub { color: var(--muted); font-size: .95rem; }
+  .badges { margin-top: .8rem; display: flex; gap: .5rem; justify-content: center; flex-wrap: wrap; }
+  .badge {
+    font-size: .75rem; padding: .2rem .65rem; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel);
+  }
+  .badge.green { color: var(--green); border-color: var(--green); }
+  .badge.amber { color: var(--amber); border-color: var(--amber); }
+  .badge.blue  { color: var(--accent); border-color: var(--accent); }
+  h2 {
+    font-size: 1.25rem; margin: 2.5rem 0 1rem; padding-bottom: .4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.1rem 1.3rem; margin-bottom: 1rem;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
+  tr:last-child td { border-bottom: none; }
+  code {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 5px;
+    padding: .1rem .35rem; font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: .85em;
+  }
+  .decision-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: .8rem; }
+  .decision {
+    background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--green);
+    border-radius: 8px; padding: .8rem 1rem;
+  }
+  .decision .num { color: var(--green); font-weight: 700; font-size: .8rem; }
+  .decision .title { font-weight: 600; margin: .15rem 0 .25rem; }
+  .decision .why { color: var(--muted); font-size: .85rem; }
+  .open { border-left-color: var(--amber); }
+  .open .num { color: var(--amber); }
+  .diagram-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; overflow-x: auto; }
+  .diagram-card svg { display: block; margin: 0 auto; min-width: 760px; }
+  .legend { display: flex; gap: 1.2rem; flex-wrap: wrap; justify-content: center; margin-top: .8rem; font-size: .8rem; color: var(--muted); }
+  .legend span::before { content: "■ "; }
+  .lg-blue::before { color: var(--accent); } .lg-green::before { color: var(--green); }
+  .lg-purple::before { color: var(--purple); } .lg-pink::before { color: var(--pink); }
+  .lg-amber::before { color: var(--amber); }
+  .phases { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: .8rem; }
+  .phase { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: .9rem 1rem; }
+  .phase h3 { margin: 0 0 .5rem; font-size: 1rem; }
+  .phase ul { margin: 0; padding-left: 1.2rem; font-size: .88rem; color: var(--text); }
+  .phase li { margin-bottom: .25rem; }
+  .phase .tag { font-size: .72rem; padding: .1rem .5rem; border-radius: 999px; margin-left: .4rem; vertical-align: middle; }
+  .tag.mvp { background: rgba(63,185,80,.15); color: var(--green); border: 1px solid var(--green); }
+  .tag.next { background: rgba(210,153,34,.12); color: var(--amber); border: 1px solid var(--amber); }
+  .callout {
+    border: 1px solid var(--amber); background: rgba(210,153,34,.07);
+    border-radius: 8px; padding: .9rem 1.1rem; margin: 1rem 0;
+  }
+  .callout strong { color: var(--amber); }
+  footer { text-align: center; color: var(--muted); font-size: .8rem; margin-top: 3rem; }
+  .twofa { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin: .8rem 0; }
+  @media (max-width: 640px) { .twofa { grid-template-columns: 1fr; } }
+  .twofa .half { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: .7rem .9rem; font-size: .88rem; }
+  .twofa .half b { display: block; margin-bottom: .2rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>🎛️ bwoc-control-center</h1>
+  <div class="sub">Cross-platform manage/config app สำหรับ BWOC fleet — ผลสรุป design discussion · 2026-06-10 → 11</div>
+  <div class="badges">
+    <span class="badge green">✅ เคาะครบ 12 ข้อ — discussion ปิด</span>
+    <span class="badge blue">📐 พร้อม scaffold เมื่อยืนยัน</span>
+  </div>
+</header>
+
+<h2>📍 TL;DR</h2>
+<div class="card">
+  <table>
+    <tr><th>Stack</th><td><b>Tauri 2</b> (Rust core) + <b>React 19</b> + Vite + shadcn/Tailwind v4 — desktop (mac/win/linux) + <b>iOS/Android</b> จาก codebase เดียว</td></tr>
+    <tr><th>Backend</th><td><b><code>bwocd</code></b> daemon ใหม่ (standalone, Rust/axum) ห่อ <code>bwoc … --json</code> · bind <code>127.0.0.1:10130</code> · เปิดผ่าน <b>tailnet</b> (<code>tailscale serve</code> HTTPS) — ไม่มีพอร์ต public</td></tr>
+    <tr><th>Auth</th><td><b>2-factor principal</b>: SSO/Google (คน, รวม identity กับ bwoc-party) + ed25519 device key (เครื่อง) — bind กันตอน enrollment ผ่าน QR</td></tr>
+    <tr><th>จุดต่าง</th><td>app <b>ตัวแรก</b> ของ ecosystem ที่ cross-platform + remote-over-tailnet — ระยะยาว <b>replace</b> bwoc-mcc + bwoc-devices-app</td></tr>
+  </table>
+</div>
+
+<h2>🗺️ System Diagram</h2>
+<div class="diagram-card">
+<svg viewBox="0 0 960 560" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'SF Pro Text','Noto Sans Thai',sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e"/>
+    </marker>
+    <marker id="arrowB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#58a6ff"/>
+    </marker>
+    <marker id="arrowP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f778ba"/>
+    </marker>
+  </defs>
+
+  <!-- ===== Clients column ===== -->
+  <rect x="20" y="30" width="240" height="210" rx="12" fill="#1c2330" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="140" y="58" text-anchor="middle" fill="#58a6ff" font-size="15" font-weight="700">📱🖥️ Control-Center App</text>
+  <text x="140" y="78" text-anchor="middle" fill="#8b949e" font-size="11">Tauri 2 · React 19 · shadcn</text>
+
+  <rect x="40" y="92" width="200" height="40" rx="7" fill="#0d1117" stroke="#30363d"/>
+  <text x="140" y="109" text-anchor="middle" fill="#e6edf3" font-size="11.5">iOS / Android (ad-hoc)</text>
+  <text x="140" y="124" text-anchor="middle" fill="#8b949e" font-size="10">RemoteHttp เท่านั้น</text>
+
+  <rect x="40" y="140" width="200" height="40" rx="7" fill="#0d1117" stroke="#30363d"/>
+  <text x="140" y="157" text-anchor="middle" fill="#e6edf3" font-size="11.5">macOS / Win / Linux</text>
+  <text x="140" y="172" text-anchor="middle" fill="#8b949e" font-size="10">LocalShell หรือ RemoteHttp</text>
+
+  <rect x="40" y="188" width="200" height="38" rx="7" fill="#0d1117" stroke="#bc8cff"/>
+  <text x="140" y="204" text-anchor="middle" fill="#bc8cff" font-size="11">🔑 controller keypair (ed25519)</text>
+  <text x="140" y="218" text-anchor="middle" fill="#8b949e" font-size="9.5">Keychain / Keystore · Transport trait</text>
+
+  <!-- ===== Tailnet ===== -->
+  <rect x="320" y="80" width="150" height="120" rx="60" fill="rgba(63,185,80,.08)" stroke="#3fb950" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="395" y="130" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="700">🔒 tailnet</text>
+  <text x="395" y="148" text-anchor="middle" fill="#8b949e" font-size="10">tailscale serve HTTPS</text>
+  <text x="395" y="163" text-anchor="middle" fill="#8b949e" font-size="10">ไม่มีพอร์ต public</text>
+
+  <!-- arrows clients -> tailnet -->
+  <line x1="260" y1="112" x2="322" y2="125" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#arrowB)"/>
+  <line x1="260" y1="160" x2="322" y2="150" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#arrowB)"/>
+  <text x="290" y="105" text-anchor="middle" fill="#58a6ff" font-size="9.5">signed</text>
+  <text x="290" y="117" text-anchor="middle" fill="#58a6ff" font-size="9.5">X-BWOC-*</text>
+
+  <!-- ===== Host: anna ===== -->
+  <rect x="530" y="20" width="410" height="150" rx="12" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="735" y="44" text-anchor="middle" fill="#e6edf3" font-size="13.5" font-weight="700">🖥️ anna (Mac) — workspace ~/workspaces/bwoc</text>
+
+  <rect x="550" y="58" width="130" height="52" rx="8" fill="#0d1117" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="615" y="80" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="700">bwocd</text>
+  <text x="615" y="96" text-anchor="middle" fill="#8b949e" font-size="9.5">axum · 127.0.0.1:10130</text>
+
+  <rect x="710" y="58" width="100" height="52" rx="8" fill="#0d1117" stroke="#30363d"/>
+  <text x="760" y="80" text-anchor="middle" fill="#e6edf3" font-size="11.5">bwoc CLI</text>
+  <text x="760" y="96" text-anchor="middle" fill="#8b949e" font-size="9.5">--json</text>
+
+  <rect x="840" y="58" width="80" height="52" rx="8" fill="#0d1117" stroke="#30363d"/>
+  <text x="880" y="80" text-anchor="middle" fill="#e6edf3" font-size="11">.bwoc/*</text>
+  <text x="880" y="96" text-anchor="middle" fill="#8b949e" font-size="9">registry · keys</text>
+
+  <line x1="680" y1="84" x2="708" y2="84" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="810" y1="84" x2="838" y2="84" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="694" y="76" text-anchor="middle" fill="#8b949e" font-size="9">shell</text>
+
+  <rect x="550" y="122" width="370" height="34" rx="7" fill="rgba(188,140,255,.06)" stroke="#bc8cff" stroke-dasharray="4 3"/>
+  <text x="735" y="143" text-anchor="middle" fill="#bc8cff" font-size="10.5">controller registry: device_pubkey → human Actor (role: owner/operator/viewer)</text>
+
+  <!-- ===== Host: busaba ===== -->
+  <rect x="530" y="195" width="410" height="115" rx="12" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="735" y="219" text-anchor="middle" fill="#e6edf3" font-size="13.5" font-weight="700">🏢 busaba (bemind, A6000) — workspace ของฝั่ง server</text>
+
+  <rect x="550" y="233" width="130" height="52" rx="8" fill="#0d1117" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="615" y="255" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="700">bwocd</text>
+  <text x="615" y="271" text-anchor="middle" fill="#8b949e" font-size="9.5">systemd · :10130</text>
+
+  <rect x="710" y="233" width="100" height="52" rx="8" fill="#0d1117" stroke="#30363d"/>
+  <text x="760" y="255" text-anchor="middle" fill="#e6edf3" font-size="11.5">bwoc CLI</text>
+  <text x="760" y="271" text-anchor="middle" fill="#8b949e" font-size="9.5">--json</text>
+
+  <rect x="840" y="233" width="80" height="52" rx="8" fill="#0d1117" stroke="#30363d"/>
+  <text x="880" y="255" text-anchor="middle" fill="#e6edf3" font-size="11">.bwoc/*</text>
+  <text x="880" y="271" text-anchor="middle" fill="#8b949e" font-size="9">agents · teams</text>
+
+  <line x1="680" y1="259" x2="708" y2="259" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="810" y1="259" x2="838" y2="259" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- tailnet -> hosts -->
+  <line x1="455" y1="110" x2="548" y2="86" stroke="#3fb950" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <line x1="460" y1="165" x2="548" y2="250" stroke="#3fb950" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="505" y="92" text-anchor="middle" fill="#3fb950" font-size="9.5">HTTPS</text>
+  <text x="490" y="222" text-anchor="middle" fill="#3fb950" font-size="9.5">multi-host</text>
+
+  <!-- LocalShell bypass (desktop on same machine) -->
+  <path d="M 140 240 C 140 330, 540 330, 612 292" fill="none" stroke="#8b949e" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="350" y="338" text-anchor="middle" fill="#8b949e" font-size="10">LocalShell — desktop เครื่องเดียวกับ workspace: shell bwoc ตรง ไม่ผ่าน network</text>
+
+  <!-- ===== Enrollment flow ===== -->
+  <rect x="20" y="380" width="920" height="160" rx="12" fill="rgba(247,120,186,.04)" stroke="#f778ba" stroke-width="1.3" stroke-dasharray="7 4"/>
+  <text x="480" y="406" text-anchor="middle" fill="#f778ba" font-size="13" font-weight="700">🔐 Enrollment (ครั้งเดียวต่อ device) — SSO + device key bind กัน = 2-factor principal</text>
+
+  <rect x="45" y="425" width="170" height="56" rx="8" fill="#0d1117" stroke="#d29922"/>
+  <text x="130" y="448" text-anchor="middle" fill="#d29922" font-size="11.5">1️⃣ Google login</text>
+  <text x="130" y="464" text-anchor="middle" fill="#8b949e" font-size="9.5">bemind GWS — client เดียว</text>
+  <text x="130" y="476" text-anchor="middle" fill="#8b949e" font-size="9.5">กับ bwoc-party</text>
+
+  <rect x="265" y="425" width="180" height="56" rx="8" fill="#0d1117" stroke="#f778ba"/>
+  <text x="355" y="448" text-anchor="middle" fill="#f778ba" font-size="11.5">2️⃣ Desktop ที่ trust</text>
+  <text x="355" y="464" text-anchor="middle" fill="#8b949e" font-size="9.5">ออก QR = enrollment grant</text>
+  <text x="355" y="476" text-anchor="middle" fill="#8b949e" font-size="9.5">เซ็นด้วย human session</text>
+
+  <rect x="495" y="425" width="180" height="56" rx="8" fill="#0d1117" stroke="#bc8cff"/>
+  <text x="585" y="448" text-anchor="middle" fill="#bc8cff" font-size="11.5">3️⃣ มือถือสแกน QR</text>
+  <text x="585" y="464" text-anchor="middle" fill="#8b949e" font-size="9.5">สร้าง keypair ใน Keychain</text>
+  <text x="585" y="476" text-anchor="middle" fill="#8b949e" font-size="9.5">ส่ง {pubkey + grant}</text>
+
+  <rect x="725" y="425" width="190" height="56" rx="8" fill="#0d1117" stroke="#3fb950"/>
+  <text x="820" y="448" text-anchor="middle" fill="#3fb950" font-size="11.5">4️⃣ bwocd bind</text>
+  <text x="820" y="464" text-anchor="middle" fill="#8b949e" font-size="9.5">pubkey → human Actor</text>
+  <text x="820" y="476" text-anchor="middle" fill="#8b949e" font-size="9.5">audit: "คน X จาก device Y"</text>
+
+  <line x1="215" y1="453" x2="263" y2="453" stroke="#f778ba" stroke-width="1.5" marker-end="url(#arrowP)"/>
+  <line x1="445" y1="453" x2="493" y2="453" stroke="#f778ba" stroke-width="1.5" marker-end="url(#arrowP)"/>
+  <line x1="675" y1="453" x2="723" y2="453" stroke="#f778ba" stroke-width="1.5" marker-end="url(#arrowP)"/>
+
+  <text x="480" y="520" text-anchor="middle" fill="#8b949e" font-size="10.5">หลัง enroll: ทุก request เซ็นด้วย device key เท่านั้น (ไม่ juggle OAuth token) · bwocd verify OIDC แบบ stateless (JWKS) — ไม่พึ่ง party uptime · revoke = ลบ binding</text>
+</svg>
+<div class="legend">
+  <span class="lg-blue">app / bwocd</span>
+  <span class="lg-green">tailnet / verified</span>
+  <span class="lg-purple">device key (ed25519)</span>
+  <span class="lg-amber">SSO (Google)</span>
+  <span class="lg-pink">enrollment flow</span>
+</div>
+</div>
+
+<h2>✅ Decisions ที่เคาะแล้ว (12 ข้อ)</h2>
+<div class="decision-grid">
+  <div class="decision"><div class="num">D1 · Daemon</div><div class="title"><code>bwocd</code> standalone (Rust/axum)</div><div class="why">รีลีสอิสระจาก framework — ไม่ลาก tokio/hyper เข้า bwoc-cli tree</div></div>
+  <div class="decision"><div class="num">D2 · Auth</div><div class="title">ed25519 signed requests เต็มรูปตั้งแต่ MVP</div><div class="why">ลอก bwoc-party pattern (JCS canonical + nonce/timestamp) — ไม่มี token-only shortcut</div></div>
+  <div class="decision"><div class="num">D3 · Scope</div><div class="title">Replace bwoc-mcc + bwoc-devices-app</div><div class="why">consolidate desktop surfaces → retire ทั้งสองเมื่อ control-center พร้อม</div></div>
+  <div class="decision"><div class="num">D4 · Frontend</div><div class="title">React 19 + Vite + shadcn/Tailwind v4</div><div class="why">ลอก components/stack จาก bwoc-party ได้ตรง</div></div>
+  <div class="decision"><div class="num">D5 · Multi-host</div><div class="title">Multi-host ตั้งแต่ MVP</div><div class="why">host-list + <code>/hosts</code> เฟส 1 — สลับดู anna ↔ busaba, architecture ถูกตั้งแต่แรก</div></div>
+  <div class="decision"><div class="num">D6 · Daemon hosts</div><div class="title">bwocd บนทั้ง anna (launchd) + busaba (systemd)</div><div class="why">แต่ละ host มี daemon + tailscale serve ของตัวเอง — คุมทั้งสอง workspace จากมือถือ</div></div>
+  <div class="decision"><div class="num">D7 · iOS delivery</div><div class="title">Ad-hoc / dev device</div><div class="why">ลง iPhone จริงผ่าน tailnet ตั้งแต่เฟส 1 (มี dev account + UDID พร้อม)</div></div>
+  <div class="decision"><div class="num">D8 · Enrollment</div><div class="title">QR จาก desktop ที่ trust</div><div class="why">desktop local เป็นตัวออกใบรับรองให้ device ใหม่ — UX ดีบนมือถือ</div></div>
+  <div class="decision"><div class="num">D9 · Port + repo</div><div class="title"><code>:10130</code> · monorepo เดียว</div><div class="why"><code>bemindlabs/bwoc-control-center</code> = Tauri app + bwocd (party=10120, ต่อเนื่อง)</div></div>
+  <div class="decision"><div class="num">D10 · SSO</div><div class="title">SSO เต็มรูป รวม identity กับ party</div><div class="why">Google client + Actor เดียวกันทั้ง ecosystem — ประกอบกับ device key เป็น 2-factor</div></div>
+  <div class="decision"><div class="num">D11 · SSO phasing</div><div class="title">SSO enrollment เต็มตั้งแต่เฟส 1</div><div class="why">Google login + QR grant + binding ใน MVP เลย ไม่มี stub owner — auth ถูกแต่แรก ไม่ต้อง migrate</div></div>
+  <div class="decision"><div class="num">D12 · watchOS</div><div class="title">watchOS companion — glanceable read-only (เฟส 3)</div><div class="why">native SwiftUI target ใน Xcode project เดียวกัน (Tauri ไม่ target watchOS) · watchOS ไม่มี VPN/tailnet → <b>iPhone เป็น relay</b> ผ่าน WatchConnectivity, ไม่เปิด public แทน · complication + notification forwarding ฟรีจาก iOS</div></div>
+</div>
+
+<h2>🔐 Auth Model — 2-factor principal</h2>
+<div class="card">
+  <div class="twofa">
+    <div class="half"><b>🧑 SSO / Google (OIDC)</b>ยืนยัน <i>คน</i> — human Actor รวมกับ bwoc-party · ทำงานหนักตอน <b>enrollment + revocation</b> · bwocd verify แบบ stateless (JWKS) ไม่พึ่ง party uptime</div>
+    <div class="half"><b>🔑 ed25519 device key</b>ยืนยัน <i>เครื่อง</i> — เก็บใน Keychain/Keystore · เซ็น <b>ทุก request</b> (header <code>X-BWOC-*</code> เหมือน party) · device key = session ที่ผูกกับคนแล้ว</div>
+  </div>
+  Layer ความปลอดภัย: <b>tailnet</b> (device ในเครือข่ายเท่านั้น) → <b>signed request</b> (identity + กัน replay) → <b>role</b> (owner/operator/viewer) → <b>per-action confirm</b> สำหรับ destructive ops (เฟส 2)
+</div>
+
+<h2>🔌 API Surface — <code>bwocd</code> v1</h2>
+<div class="card">
+<table>
+  <tr><th>Endpoint</th><th>ห่อ</th><th>Scope</th><th>เฟส</th></tr>
+  <tr><td><code>GET /health</code> · <code>GET /hosts</code></td><td>liveness · self-describe</td><td>public · read</td><td>1</td></tr>
+  <tr><td><code>GET /fleet</code></td><td><code>bwoc list --json</code> + <code>fleet health --json</code></td><td>read</td><td>1</td></tr>
+  <tr><td><code>GET /agents/:id</code> · <code>…/inbox</code></td><td><code>bwoc status</code> + manifest · <code>bwoc inbox --json</code></td><td>read</td><td>1</td></tr>
+  <tr><td><code>GET /teams</code> · <code>…/tasks</code></td><td><code>bwoc team/task list --json</code></td><td>read</td><td>1</td></tr>
+  <tr><td><code>GET /agents/:id/log?follow=1</code></td><td><code>bwoc log</code> → SSE</td><td>read</td><td>2</td></tr>
+  <tr><td><code>POST …/send · spawn · stop · start</code></td><td>lifecycle + messaging</td><td>write</td><td>2</td></tr>
+  <tr><td><code>POST …/retire</code> · <code>PUT …/config</code></td><td><code>bwoc retire</code> · manifest/routes.toml</td><td>write + confirm</td><td>2–3</td></tr>
+</table>
+</div>
+
+<h2>🚀 Roadmap</h2>
+<div class="phases">
+  <div class="phase">
+    <h3>เฟส 1 <span class="tag mvp">MVP</span></h3>
+    <ul>
+      <li><code>bwocd</code> read-only + ed25519 verify เต็ม</li>
+      <li>SSO enrollment เต็ม: Google login + QR grant + binding</li>
+      <li>Tauri app: Transport trait (LocalShell/RemoteHttp), host-list (anna+busaba)</li>
+      <li>หน้าจอ: Fleet → Agent detail → Inbox (read)</li>
+      <li>Ship จริง: macOS .dmg + iOS ad-hoc</li>
+      <li><b>Demo = iPhone นอกบ้านเห็น fleet 2 host สด</b></li>
+    </ul>
+  </div>
+  <div class="phase">
+    <h3>เฟส 2 <span class="tag next">Actions</span></h3>
+    <ul>
+      <li>Mutations: send / spawn / stop / retire</li>
+      <li>Per-action confirm + biometric</li>
+      <li>SSE log streaming · chat (chat_proto)</li>
+      <li>Multi-operator roles + revocation UI</li>
+      <li>Party Actor cross-link</li>
+    </ul>
+  </div>
+  <div class="phase">
+    <h3>เฟส 3 <span class="tag next">Consolidate</span></h3>
+    <ul>
+      <li>Config editing (manifest / .env / routes)</li>
+      <li>Gateway / party / inbox monitor</li>
+      <li>Ollama model management</li>
+      <li>Devices / MQTT → กลืน mcc + devices-app</li>
+      <li>⌚ watchOS companion (SwiftUI, iPhone relay)</li>
+      <li>Web build (OIDC per-session)</li>
+    </ul>
+  </div>
+</div>
+
+<h2>🏁 สถานะ</h2>
+<div class="callout" style="border-color: var(--green); background: rgba(63,185,80,.07);">
+  <strong style="color: var(--green);">Discussion ปิด — เคาะครบทั้ง 11 ข้อ</strong> (ข้อสุดท้าย SSO enrollment เต็มตั้งแต่เฟส 1, เคาะ 2026-06-11). ขั้นถัดไป: ยืนยันเพื่อ scaffold repo <code>bemindlabs/bwoc-control-center</code> ตามดีไซน์นี้
+</div>
+
+<footer>ร่างโดยแอนนา 🎀 · DESIGN.md ฉบับเต็มอยู่ที่ <code>projects/bwoc-control-center/DESIGN.md</code> · สถานะ: DISCUSSION — ยังไม่ scaffold โค้ดจนกว่าจะยืนยัน</footer>
+
+</div>
+</body>
+</html>

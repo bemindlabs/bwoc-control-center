@@ -8,6 +8,14 @@
 > 2. **Auth** = **ed25519 signed requests ครบตั้งแต่ MVP** (ลอก bwoc-party pattern, ไม่มี token-only shortcut)
 > 3. **Scope ระยะยาว** = **replace bwoc-mcc + bwoc-devices-app** (consolidate desktop surfaces → retire ทั้งสองเมื่อ control-center พร้อม)
 > 4. **Frontend** = **React 19** + Vite + shadcn/Tailwind v4 (ลอก components จาก bwoc-party)
+> 5. **Multi-host = ตั้งแต่ MVP** — host-list + `/hosts` ในเฟส 1, สลับดู anna ↔ busaba
+> 6. **bwocd รันบนทั้ง anna (Mac, launchd) + busaba (bemind, systemd)** — แต่ละ host มี daemon + `tailscale serve` ของตัวเอง
+> 7. **iOS = ad-hoc / dev device** (ลง iPhone จริงผ่าน tailnet เฟส 1; มี dev account + UDID พร้อม)
+> 8. **Controller registration = QR จาก desktop ที่ trust** — desktop app (local) เป็นตัวออกใบรับรองให้ device ใหม่
+> 9. **Port `:10130`** (party=10120) · **repo เดียว `bemindlabs/bwoc-control-center`** = monorepo (Tauri app + bwocd)
+> 10. **SSO เต็มรูป รวม identity กับ party** — 2-factor principal: SSO=คน + ed25519=เครื่อง, bind ตอน enroll (ดู §8)
+> 11. **SSO enrollment เต็มตั้งแต่เฟส 1** — Google login + QR grant + binding ใน MVP เลย ไม่มี stub owner (เคาะ 2026-06-11)
+> 12. **รองรับ watchOS** (เคาะ 2026-06-11) — glanceable read-only companion: native SwiftUI target (Tauri ไม่ target watchOS), **iPhone เป็น relay** ผ่าน WatchConnectivity (watchOS ไม่มี VPN/tailnet — ห้ามเปิด public แทน), เฟส 3 (ดู §9)
 
 ---
 
@@ -168,19 +176,67 @@ REST mirror ของ `bwoc --json` + SSE สำหรับ live. ทุก rou
 > หมายเหตุ: ed25519 transport signing อยู่ในเฟส 1 แล้ว; ที่เลื่อนไปเฟส 2 คือ *per-action confirm/biometric UX* เท่านั้น
 
 **เฟส 2:** actions (spawn/stop/retire/send) + per-action confirm + biometric + SSE logs + chat (chat_proto)
-**เฟส 3:** config edit, gateway/party/inbox monitor, Ollama models, devices/MQTT → กลืน mcc + devices-app
+**เฟส 3:** config edit, gateway/party/inbox monitor, Ollama models, devices/MQTT → กลืน mcc + devices-app · **watchOS companion** (ดู §9)
 
 ---
 
-## 7. ❓ คำถามที่ยังเปิดอยู่
+## 9. ⌚ watchOS Companion (D12 — เคาะ 2026-06-11)
 
-> เคาะแล้ว: daemon=standalone · auth=ed25519-full · scope=replace mcc+devices-app · frontend=React 19 (ดู §0 Decisions)
+**Scope: glanceable read-only** — fleet health บนข้อมือ ไม่ใช่ full client
 
-1. **Multi-host จำเป็นใน MVP ไหม?** — เฟส 1 ต้องเห็นทั้ง anna + busaba พร้อมกัน หรือ host เดียวพอก่อน (อีก host เฟสหลัง)? *(กระทบ host-list UI + `/hosts` ตั้งแต่แรก)*
-2. **bwocd รันที่ไหนบ้าง?** — เฉพาะ bemind server, หรือบน Mac (anna) ด้วย? คุม Mac workspace จากมือถือต้องมี bwocd บน Mac + `tailscale serve` บน Mac
-3. **iOS delivery:** distribute ยังไง — TestFlight / ad-hoc / **self-hosted OTA** (bemindlabs)? มี Apple Developer account + signing cert พร้อมหรือยัง? *(gate ของ "ship iOS จริง" ในเฟส 1)*
-4. **Controller registration UX:** ลงทะเบียน controller pubkey กับ bwocd ครั้งแรกยังไง — provisioning token ใน `bwocd.toml`, QR จาก desktop ที่ trust แล้ว, หรือ `bwoc` CLI command ใหม่ (`bwoc controller add <pubkey>`)?
-5. **Port + repo:** ใช้ `:10130` ตามที่เสนอไหม (party=10120)? และ repo `bemindlabs/bwoc-control-center` แยกใหม่ใช่ไหม?
+**Constraints ที่บังคับสถาปัตยกรรม:**
+1. **Tauri ไม่ target watchOS** (ไม่มี webview บนนาฬิกา) → watch UI = **native SwiftUI target** เพิ่มใน Xcode project ที่ `tauri ios init` generate (repo เดียวกัน ไม่ใช่โปรเจกต์แยก)
+2. **watchOS ไม่รองรับ VPN/Tailscale** → ต่อ tailnet ตรงไม่ได้ และ **ไม่เปิด public endpoint ชดเชย** (D-infra) → **iPhone app = relay**: watch ↔ WatchConnectivity ↔ iPhone (Tauri app) ↔ tailnet ↔ bwocd
+3. ed25519 ฝั่ง Swift ใช้ **CryptoKit Curve25519.Signing** ได้ — แต่เฟสแรกไม่จำเป็น: watch ไม่ถือ key เอง, identity คือ iPhone (ที่ enroll แล้ว) — snapshot ที่ส่งให้ watch เป็น data ภายใน app pair
+
+**Features:**
+- **Watch app:** fleet list + health badge ต่อ host (อ่าน snapshot cache จาก iPhone, refresh ผ่าน WatchConnectivity)
+- **Complication/Widget:** ตัวเลข agents healthy/total บนหน้าปัด (timeline update จาก background transfer)
+- **Notifications:** ได้ฟรีจาก iOS notification forwarding (iPhone แจ้งเตือน → ขึ้น watch อัตโนมัติ) — ไม่ต้องมี APNs pipeline แยกฝั่ง watch
+- **ไม่มี actions บน watch** ในเฟสนี้ (destructive ops ต้อง per-action confirm + biometric ซึ่งออกแบบไว้กับ phone/desktop)
+
+**ทำไมเฟส 3:** พึ่ง iPhone app ที่เสถียร (เฟส 1) + notification/alert pipeline (เฟส 2) ก่อนถึงจะมีของให้ glance อย่างมีความหมาย
+
+---
+
+## 7. ✅ คำถามเปิด — เคาะครบทุกข้อ
+
+ทั้ง 11 decision อยู่ใน §0 แล้ว — **discussion ปิด, ไม่มีข้อค้าง** (ข้อสุดท้าย SSO phasing เคาะ 2026-06-11). พร้อม scaffold เมื่อที่รักสั่ง
+
+---
+
+## 8. SSO / Human Identity (เคาะ: SSO เต็มรูป รวม party)
+
+**หลักการ: SSO + ed25519 = 2-factor principal (ไม่ใช่ทางเลือกแข่งกัน)**
+- **SSO (Google/OIDC)** ยืนยัน *คน* (human Actor) — รวม identity space กับ bwoc-party (Google client + Actor/handle เดียวกัน)
+- **ed25519 device key** ยืนยัน *เครื่อง* (controller)
+- ทั้งคู่ **bind กันตอน enrollment** → ทุก action audit ได้ว่า "human X จาก device Y"
+
+**Flow:**
+```
+[Enrollment — ครั้งเดียว, บน desktop ที่ trust]
+  1. คน login Google (bemind GWS — เดียวกับ party) บน desktop app
+  2. device ใหม่สร้าง ed25519 keypair (เก็บใน secure storage)
+  3. desktop แสดง QR = enrollment grant ที่เซ็นด้วย human session
+  4. device ส่ง {pubkey + grant} → bwocd
+  5. bwocd bind: device_pubkey → human Actor (Google `sub`) ใน controller registry
+     + (ออปชัน) ลงทะเบียน controller เป็น Actor ใน bwoc-party ด้วย
+
+[Per-request — มือถือ/เดสก์ท็อป]
+  • device เซ็น ed25519 (X-BWOC-* headers เหมือน party) — ไม่ต้องส่ง OAuth token ทุก request
+  • bwocd verify signature → resolve bound human Actor → authz + audit ใช้ "คน"
+  • token refresh / session expiry → re-attest (ไม่งั้น revoke device)
+```
+> ทำไมไม่ verify OIDC token ทุก request: บนมือถือ การ juggle OAuth token ทุกครั้งแย่กว่าการเซ็นด้วย device key ที่ฝังใน Keychain — **device key = session ที่ผูกกับคนแล้ว**. SSO ทำงานหนักตอน enrollment + revocation เป็นหลัก
+
+**bwocd identity backend:** verify Google OIDC แบบ stateless (JWKS) — **ไม่ผูกว่า party ต้อง up** (bwocd รันบน anna ที่ไม่มี party ได้). "รวม party" = Google client เดียวกัน + Actor/handle convention เดียวกัน + cross-reference ได้
+
+**Authz:** human Actor → role (owner/operator/viewer) → gate read vs write vs destructive. Revoke = ลบ binding ที่ bwocd (device ใช้ไม่ได้ทันที)
+
+**Phasing (เคาะแล้ว — SSO enrollment เต็มตั้งแต่เฟส 1, ไม่มี stub):**
+- **เฟส 1:** device keypair signing + **enrollment ผ่าน Google login บน desktop เต็มรูป** (OIDC verify + QR grant + binding registry) + single human Actor — auth ถูกต้องตั้งแต่แรก ไม่ต้อง migrate
+- **เฟส 2:** multi-operator roles + revocation UI + party Actor cross-link
+- **เฟส 3:** web build (ตรงนี้ OIDC per-session จำเป็นจริง เพราะไม่มี device key)
 
 ---
 
