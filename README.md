@@ -43,7 +43,17 @@ Next: enable `tailscale serve`, QR + SSO enrollment, iOS ad-hoc device build.
 pnpm install && pnpm tauri dev        # desktop app against the local workspace
 cargo run --manifest-path bwocd/Cargo.toml -- --workspace ~/workspaces/bwoc   # daemon on :10130
 scripts/ios-build.sh sim              # build + the iOS app for the simulator
+pnpm tauri build && scripts/make-dmg.sh   # release .app + a distributable .dmg
 ```
+
+> **macOS packaging gotcha:** `tauri build`'s built-in DMG step drives Finder via
+> AppleScript and fails in any headless/automation context. `scripts/make-dmg.sh`
+> builds the same `.dmg` with `hdiutil` only (no Finder) — the `.app` from
+> `tauri build` is always fine; only its DMG layout step is the problem.
+>
+> **`bwoc` discovery:** the installed app resolves the `bwoc` binary from the
+> well-known install dirs (`/opt/homebrew/bin`, `~/.cargo/bin`, …) because a
+> Finder-launched app has a minimal PATH. Override with `BWOC_BIN`.
 
 > **iOS build gotcha:** the iOS Rust std targets are managed by *rustup*, but Homebrew's `cargo`
 > shadows it on PATH with no iOS std (`can't find crate for core`). `scripts/ios-build.sh` forces
