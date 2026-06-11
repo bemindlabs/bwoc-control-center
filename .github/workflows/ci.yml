@@ -48,6 +48,13 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test --all-features
+      - if: steps.d.outputs.go == 'true'
+        name: fmt + clippy + test (cc-signing)
+        working-directory: cc-signing
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-features
 
   frontend:
     name: Frontend (typecheck · lint · build)

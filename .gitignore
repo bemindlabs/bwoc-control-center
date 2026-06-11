@@ -27,3 +27,4 @@ src-tauri/gen
 .idea
 .vscode/*
 !.vscode/extensions.json
+cc-signing/target

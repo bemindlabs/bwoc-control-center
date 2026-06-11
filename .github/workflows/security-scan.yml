@@ -1,8 +1,8 @@
 name: Security Scan
 
 # RULE (bemindlabs): every project must pass Semgrep (SAST) + Trivy (VA: deps/secrets/IaC)
-# before going to production. This workflow is a REQUIRED gate on main + PRs, and is
-# callable (workflow_call) so deploy/release workflows can depend on it.
+# before going to production. Required gate on main + PRs, and callable (workflow_call) so
+# deploy/release workflows can depend on it.
 
 on:
   pull_request:
@@ -13,7 +13,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write   # upload SARIF to the Security tab
 
 jobs:
   semgrep:
@@ -22,49 +21,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Semgrep
-        run: pipx install semgrep || pip install semgrep
-      - name: Semgrep scan (fail on findings)
+        run: pipx install semgrep || pip install --user semgrep
+      - name: Semgrep scan (fail on ERROR findings)
         run: |
           semgrep scan \
             --config p/security-audit \
             --config p/secrets \
             --config p/owasp-top-ten \
-            --error \
-            --severity ERROR \
-            --sarif --output semgrep.sarif
-      - name: Upload SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: semgrep.sarif
-          category: semgrep
+            --error --severity ERROR
 
   trivy:
     name: Trivy VA (deps · secrets · IaC)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Trivy filesystem scan (fail on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: fs
-          scanners: vuln,secret,misconfig
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
-          format: table
-      - name: Trivy SARIF (for Security tab)
-        if: always()
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: fs
-          scanners: vuln,secret,misconfig
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: trivy.sarif
-      - name: Upload SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy.sarif
-          category: trivy
+      - name: Install Trivy
+        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+      - name: Trivy VA scan (fail on HIGH/CRITICAL)
+        run: |
+          trivy fs --scanners vuln,secret,misconfig \
+            --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 .

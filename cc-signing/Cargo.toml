@@ -1,0 +1,13 @@
+[package]
+name = "cc-signing"
+version = "0.1.0"
+description = "Shared signed-request primitives for bwoc-control-center — one canonicalizer for signer (app) and verifier (bwocd)"
+authors = ["bemindlabs"]
+edition = "2021"
+
+[dependencies]
+ed25519-dalek = "2"
+sha2 = "0.10"
+hex = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+rand = "0.8"

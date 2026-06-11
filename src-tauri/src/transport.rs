@@ -1,11 +1,40 @@
 //! Transport layer — DESIGN.md §2.
 //!
-//! `LocalShell` is the desktop-on-the-same-machine path: shell `bwoc … --json`
-//! directly, no network. `RemoteHttp` (mobile / cross-host, ed25519-signed
-//! requests to bwocd over the tailnet) lands in phase 1 alongside enrollment;
-//! both will sit behind one trait once there are two implementations to unify.
+//! `LocalShell` shells `bwoc … --json` on this machine (no network).
+//! `RemoteHttp` signs every request with this install's controller key
+//! (cc-signing — the SAME canonicalizer bwocd verifies with) and talks to a
+//! `bwocd` over the tailnet. The frontend never knows which one served it.
 
 use std::path::PathBuf;
+
+pub enum Transport {
+    Local(LocalShell),
+    Remote(RemoteHttp),
+}
+
+impl Transport {
+    /// `host` = None/"local" → LocalShell; otherwise a host name from
+    /// hosts.toml → RemoteHttp against its base URL.
+    pub fn resolve(host: Option<String>, workspace: Option<String>) -> Result<Self, String> {
+        match host.as_deref() {
+            None | Some("local") => Ok(Self::Local(LocalShell::resolve(workspace)?)),
+            Some(name) => {
+                let hosts = crate::config::load_hosts()?;
+                let entry = hosts
+                    .into_iter()
+                    .find(|h| h.name == name)
+                    .ok_or_else(|| format!("unknown host '{name}' (not in hosts.toml)"))?;
+                let ctrl = crate::config::load_or_create_controller()?;
+                Ok(Self::Remote(RemoteHttp {
+                    base: entry.url.trim_end_matches('/').to_string(),
+                    controller: ctrl,
+                }))
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 pub struct LocalShell {
     workspace: PathBuf,
@@ -31,7 +60,7 @@ impl LocalShell {
         self.workspace.to_str().unwrap_or("")
     }
 
-    /// Run `bwoc --workspace <ws> <args…> --json` and parse stdout as JSON.
+    /// Run `bwoc <args…> --workspace <ws> --json` and parse stdout as JSON.
     pub async fn bwoc_json(&self, args: &[&str]) -> Result<serde_json::Value, String> {
         let ws = self.workspace.clone();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
@@ -69,6 +98,48 @@ impl LocalShell {
         String::from_utf8(out.stdout)
             .ok()
             .map(|s| s.trim().to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+pub struct RemoteHttp {
+    base: String,
+    controller: crate::config::Controller,
+}
+
+impl RemoteHttp {
+    /// Signed GET against bwocd; `path` must start with '/' and carry no query
+    /// (extend with cc_signing::canonical_path sorting when queries appear).
+    pub async fn get_json(&self, path: &str) -> Result<serde_json::Value, String> {
+        let canonical = cc_signing::canonical_path(path, None);
+        let headers = cc_signing::build_signed_headers(
+            &self.controller.id,
+            &self.controller.seed_hex,
+            "GET",
+            &canonical,
+            b"",
+        )?;
+        let client = reqwest::Client::new();
+        let mut req = client.get(format!("{}{}", self.base, path));
+        for (k, v) in headers {
+            req = req.header(k, v);
+        }
+        let res = req
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| format!("bwocd unreachable: {e}"))?;
+        let status = res.status();
+        if !status.is_success() {
+            return Err(format!(
+                "bwocd {}: {} (controller '{}' registered on that host?)",
+                status,
+                res.text().await.unwrap_or_default(),
+                self.controller.id
+            ));
+        }
+        res.json().await.map_err(|e| format!("bad bwocd JSON: {e}"))
     }
 }
 

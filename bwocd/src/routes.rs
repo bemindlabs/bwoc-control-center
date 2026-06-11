@@ -120,7 +120,12 @@ async fn fleet(State(state): State<Arc<AppState>>) -> Response {
     let health = bwoc_json(&state.workspace, &["fleet", "health"])
         .await
         .unwrap_or(serde_json::Value::Null);
-    Json(serde_json::json!({"agents": agents, "health": health})).into_response()
+    Json(serde_json::json!({
+        "workspace": state.workspace.display().to_string(),
+        "agents": agents,
+        "health": health,
+    }))
+    .into_response()
 }
 
 async fn agent(State(state): State<Arc<AppState>>, AxPath(id): AxPath<String>) -> Response {
