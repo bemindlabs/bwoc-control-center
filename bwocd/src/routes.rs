@@ -84,6 +84,9 @@ async fn verify_signed_request(
         now,
     ) {
         Ok(()) => {
+            // Access log: who reached which route. Pairs with the REFUSED line
+            // below so the journal is a complete audit trail, not just failures.
+            eprintln!("bwocd: OK {} {} sender={sender}", parts.method, canonical);
             let req = Request::from_parts(parts, axum::body::Body::from(bytes));
             next.run(req).await
         }
