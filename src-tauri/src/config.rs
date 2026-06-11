@@ -61,13 +61,33 @@ pub fn load_or_create_controller() -> Result<Controller, String> {
     Ok(ctrl)
 }
 
-/// Load the remote host list (empty when hosts.toml does not exist yet).
+/// Built-in fleet hosts — used when no hosts.toml exists (notably on mobile,
+/// whose sandbox has no config file to seed). Tailnet hostnames aren't secret;
+/// a user hosts.toml still overrides these.
+fn default_hosts() -> Vec<HostEntry> {
+    vec![
+        HostEntry {
+            name: "anna".into(),
+            url: "https://kla-macbook-spro-16.tail32ca95.ts.net:10130".into(),
+        },
+        HostEntry {
+            name: "busaba".into(),
+            url: "https://bemindlabs.tail32ca95.ts.net:10130".into(),
+        },
+    ]
+}
+
+/// Load the remote host list, falling back to the built-in defaults when
+/// hosts.toml is absent or empty.
 pub fn load_hosts() -> Result<Vec<HostEntry>, String> {
     let path = config_dir()?.join("hosts.toml");
     if !path.is_file() {
-        return Ok(Vec::new());
+        return Ok(default_hosts());
     }
     let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let parsed: HostsFile = toml::from_str(&raw).map_err(|e| format!("bad hosts.toml: {e}"))?;
+    if parsed.host.is_empty() {
+        return Ok(default_hosts());
+    }
     Ok(parsed.host)
 }
