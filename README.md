@@ -25,21 +25,29 @@ See **[DESIGN.md](DESIGN.md)** for the full architecture, API surface, and MVP p
 
 ## Status
 
-🚧 **Phase 1 scaffold** — design closed (12 decisions, see [DESIGN.md](DESIGN.md)). The app renders
-a live local fleet (LocalShell), and `bwocd` serves the signed read API end-to-end. Next:
-RemoteHttp transport in the app, QR + SSO enrollment, iOS ad-hoc build.
+🚧 **Phase 1** — design closed (12 decisions, see [DESIGN.md](DESIGN.md)). Desktop app reads local
+(LocalShell) **and** remote hosts (RemoteHttp, signed) with a host switcher; `bwocd` serves the
+signed read API and is deployed on anna + busaba; the iOS app builds and runs on the simulator.
+Next: enable `tailscale serve`, QR + SSO enrollment, iOS ad-hoc device build.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `src/` + `src-tauri/` | Tauri 2 app — React 19 UI + Rust core (`fleet_snapshot`, `agent_inbox`, `host_info` over the **LocalShell** transport) |
-| `bwocd/` | Control daemon (axum) — wraps `bwoc … --json` behind ed25519-signed HTTP, loopback-only + `tailscale serve` |
+| `src/` + `src-tauri/` | Tauri 2 app — React 19 UI + Rust core. `Transport` resolves per call: `local` → LocalShell (`bwoc --json`), a host name → RemoteHttp (signed) |
+| `cc-signing/` | Shared ed25519 wire primitives — imported by BOTH the app (signer) and bwocd (verifier) so the format can't drift |
+| `bwocd/` | Control daemon (axum) — wraps `bwoc … --json` behind signed HTTP, loopback-only + `tailscale serve` |
+| `deploy/` + `scripts/` | launchd/systemd units, tailnet guide, `ios-build.sh` |
 
 ```bash
 pnpm install && pnpm tauri dev        # desktop app against the local workspace
 cargo run --manifest-path bwocd/Cargo.toml -- --workspace ~/workspaces/bwoc   # daemon on :10130
+scripts/ios-build.sh sim              # build + the iOS app for the simulator
 ```
+
+> **iOS build gotcha:** the iOS Rust std targets are managed by *rustup*, but Homebrew's `cargo`
+> shadows it on PATH with no iOS std (`can't find crate for core`). `scripts/ios-build.sh` forces
+> `~/.cargo/bin` to the front of PATH — do the same in any CI/build-server invocation.
 
 `bwocd` auth is wire-compatible with `bwoc-party`'s signed requests (same `X-BWOC-*` headers +
 canonical payload), so party's `sign.mjs`/`partyctl` double as test clients. Controllers register
