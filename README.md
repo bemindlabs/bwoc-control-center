@@ -25,14 +25,32 @@ See **[DESIGN.md](DESIGN.md)** for the full architecture, API surface, and MVP p
 
 ## Status
 
-🚧 **Design phase** — stack chosen (Tauri 2 + React 19 + Vite + shadcn/Tailwind). Code scaffold
-pending design sign-off.
+🚧 **Phase 1 scaffold** — design closed (12 decisions, see [DESIGN.md](DESIGN.md)). The app renders
+a live local fleet (LocalShell), and `bwocd` serves the signed read API end-to-end. Next:
+RemoteHttp transport in the app, QR + SSO enrollment, iOS ad-hoc build.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `src/` + `src-tauri/` | Tauri 2 app — React 19 UI + Rust core (`fleet_snapshot`, `agent_inbox`, `host_info` over the **LocalShell** transport) |
+| `bwocd/` | Control daemon (axum) — wraps `bwoc … --json` behind ed25519-signed HTTP, loopback-only + `tailscale serve` |
+
+```bash
+pnpm install && pnpm tauri dev        # desktop app against the local workspace
+cargo run --manifest-path bwocd/Cargo.toml -- --workspace ~/workspaces/bwoc   # daemon on :10130
+```
+
+`bwocd` auth is wire-compatible with `bwoc-party`'s signed requests (same `X-BWOC-*` headers +
+canonical payload), so party's `sign.mjs`/`partyctl` double as test clients. Controllers register
+in `<workspace>/.bwoc/bwocd/controllers.toml` (`[[controller]] id/public_key/scope`).
 
 ## Stack
 
-- **Tauri 2** — desktop + iOS + Android from one Rust core; links `bwoc-core` directly, reuses the
-  ed25519 signing crate. iOS builds ship via the self-hosted runner → OTA on bemindlabs.
-- **React 19 + Vite + shadcn/ui (Tailwind v4)** — frontend (components borrowed from `bwoc-party`).
+- **Tauri 2** — desktop + iOS + Android from one Rust core. iOS builds ship via the self-hosted
+  runner → OTA on bemindlabs.
+- **React 19 + Vite + Tailwind v4** — frontend (shadcn/ui lands with the host-list UI).
+- **bwocd** — axum + ed25519-dalek; the CLI stays the single source of truth (no logic forked).
 
 ## Quality gate
 

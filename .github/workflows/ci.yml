@@ -31,10 +31,19 @@ jobs:
       - if: steps.d.outputs.go == 'true'
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: |
+            src-tauri
+            bwocd
       - if: steps.d.outputs.go == 'true'
-        name: fmt + clippy + test
+        name: fmt + clippy + test (src-tauri)
         working-directory: src-tauri
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-features
+      - if: steps.d.outputs.go == 'true'
+        name: fmt + clippy + test (bwocd)
+        working-directory: bwocd
         run: |
           cargo fmt --all -- --check
           cargo clippy --all-targets --all-features -- -D warnings
