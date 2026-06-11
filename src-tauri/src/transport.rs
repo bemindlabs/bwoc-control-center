@@ -67,7 +67,7 @@ impl LocalShell {
         let out = tauri::async_runtime::spawn_blocking(move || {
             // `--workspace` is a per-subcommand option — it goes after the
             // subcommand words, not before them.
-            std::process::Command::new("bwoc")
+            std::process::Command::new(bwoc_bin())
                 .args(&args)
                 .arg("--workspace")
                 .arg(&ws)
@@ -76,7 +76,7 @@ impl LocalShell {
         })
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|e| format!("cannot exec bwoc: {e} — is it on PATH?"))?;
+        .map_err(|e| format!("cannot exec bwoc: {e} — install it or set BWOC_BIN"))?;
         if !out.status.success() {
             return Err(format!(
                 "bwoc exited {}: {}",
@@ -90,7 +90,9 @@ impl LocalShell {
 
     pub async fn bwoc_version(&self) -> Option<String> {
         let out = tauri::async_runtime::spawn_blocking(|| {
-            std::process::Command::new("bwoc").arg("--version").output()
+            std::process::Command::new(bwoc_bin())
+                .arg("--version")
+                .output()
         })
         .await
         .ok()?
@@ -99,6 +101,32 @@ impl LocalShell {
             .ok()
             .map(|s| s.trim().to_string())
     }
+}
+
+/// Resolve the `bwoc` binary. A GUI app launched from Finder gets a minimal
+/// PATH that usually lacks `~/.cargo/bin` etc., so a bare `bwoc` would fail to
+/// exec — probe the well-known install dirs (the bwoc-mcc approach), with a
+/// `BWOC_BIN` override winning. Falls back to bare `bwoc` (honors PATH when the
+/// app *was* launched from a shell, e.g. `tauri dev`).
+fn bwoc_bin() -> PathBuf {
+    if let Some(p) = std::env::var_os("BWOC_BIN") {
+        return PathBuf::from(p);
+    }
+    let home = dirs_home();
+    let candidates = [
+        PathBuf::from("/opt/homebrew/bin/bwoc"),
+        PathBuf::from("/usr/local/bin/bwoc"),
+        home.as_ref()
+            .map(|h| h.join(".local/bin/bwoc"))
+            .unwrap_or_default(),
+        home.as_ref()
+            .map(|h| h.join(".cargo/bin/bwoc"))
+            .unwrap_or_default(),
+    ];
+    candidates
+        .into_iter()
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from("bwoc"))
 }
 
 // ---------------------------------------------------------------------------
