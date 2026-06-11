@@ -69,6 +69,17 @@ Then open `https://<host>.<tailnet>.ts.net:10131/` in **Safari** on a device tha
 (a) one of the provisioning profile's registered devices and (b) on the tailnet, and
 tap **Install**. The dev profile here covers 4 devices, valid until 2027-04.
 
+**Persistent hosting** (survives reboot): stage the bundle into a stable dir and run
+the static server under launchd — the `tailscale serve` mapping persists on its own.
+
+```bash
+mkdir -p ~/.local/share/bwoc-ota && cp out/ota/* ~/.local/share/bwoc-ota/
+sed "s|__HOME__|$HOME|g" deploy/tech.bemind.bwoc-ota.plist \
+  > ~/Library/LaunchAgents/tech.bemind.bwoc-ota.plist
+launchctl load ~/Library/LaunchAgents/tech.bemind.bwoc-ota.plist
+# to publish a new build later: rebuild → make-ota → re-copy into ~/.local/share/bwoc-ota
+```
+
 > **`bwoc` discovery:** the installed app resolves the `bwoc` binary from the
 > well-known install dirs (`/opt/homebrew/bin`, `~/.cargo/bin`, …) because a
 > Finder-launched app has a minimal PATH. Override with `BWOC_BIN`.
