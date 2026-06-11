@@ -109,13 +109,17 @@ async fn host_info(host: Option<String>, workspace: Option<String>) -> Result<Ho
     }
 }
 
-/// Hosts the UI can switch between: "local" + everything in hosts.toml.
+/// Hosts the UI can switch between. Desktop lists "local" first (LocalShell
+/// against this machine's workspace); mobile omits it — there is no `bwoc` CLI
+/// or workspace in the app sandbox, so only remote hosts make sense.
 #[tauri::command]
 fn list_hosts() -> Result<Vec<HostListEntry>, String> {
-    let mut out = vec![HostListEntry {
+    let mut out = Vec::new();
+    #[cfg(not(mobile))]
+    out.push(HostListEntry {
         name: "local".into(),
         url: None,
-    }];
+    });
     for h in config::load_hosts()? {
         out.push(HostListEntry {
             name: h.name,

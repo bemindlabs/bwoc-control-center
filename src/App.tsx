@@ -67,10 +67,10 @@ function healthColor(status: string): string {
 }
 
 export default function App() {
-  const [hosts, setHosts] = useState<HostListEntry[]>([
-    { name: "local", url: null },
-  ]);
-  const [activeHost, setActiveHost] = useState("local");
+  const [hosts, setHosts] = useState<HostListEntry[]>([]);
+  // Empty until list_hosts resolves; we then default to its first entry —
+  // "local" on desktop, the first remote host on mobile (no local there).
+  const [activeHost, setActiveHost] = useState("");
   const [snap, setSnap] = useState<FleetSnapshot | null>(null);
   const [host, setHost] = useState<HostInfo | null>(null);
   const [controller, setController] = useState<ControllerInfo | null>(null);
@@ -93,11 +93,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    invoke<HostListEntry[]>("list_hosts").then(setHosts).catch(() => {});
+    invoke<HostListEntry[]>("list_hosts")
+      .then((h) => {
+        setHosts(h);
+        // Default to the first host the backend offers (local on desktop,
+        // a remote host on mobile).
+        setActiveHost((cur) => cur || h[0]?.name || "");
+      })
+      .catch(() => {});
     invoke<ControllerInfo>("controller_info").then(setController).catch(() => {});
   }, []);
 
   useEffect(() => {
+    if (!activeHost) return;
     setSnap(null);
     refresh(activeHost);
     const t = setInterval(() => refresh(activeHost), POLL_MS);
@@ -233,20 +241,22 @@ export default function App() {
           </section>
         )}
 
-        {/* ── footer ─────────────────────────────────────── */}
+        {/* ── footer: controller identity (register on a host to connect) ── */}
         {controller && (
           <footer className="mt-auto pt-2 text-center text-[11px] text-muted-foreground">
-            controller <span className="font-mono">{controller.id}</span> ·{" "}
+            <p>
+              controller <span className="font-mono">{controller.id}</span>
+            </p>
             <button
-              className="font-mono underline-offset-2 hover:text-foreground hover:underline"
-              title="copy public key"
+              className="mt-0.5 break-all font-mono leading-snug hover:text-foreground"
+              title="tap to copy public key"
               onClick={() => {
-                navigator.clipboard.writeText(controller.public_key);
+                navigator.clipboard?.writeText(controller.public_key);
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1200);
               }}
             >
-              {copied ? "copied ✓" : `${controller.public_key.slice(0, 16)}…`}
+              {copied ? "copied ✓" : controller.public_key}
             </button>
           </footer>
         )}
