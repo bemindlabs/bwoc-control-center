@@ -1,5 +1,122 @@
 @import "tailwindcss";
 
+/* Self-hosted fonts (offline-capable desktop app — no Google CDN).
+   Geist for latin/mono, Noto Sans Thai Looped for Thai glyphs. */
+@import "@fontsource-variable/geist/index.css";
+@import "@fontsource-variable/geist-mono/index.css";
+@import "@fontsource-variable/noto-sans-thai-looped/index.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================
+   bwoc·control-center — "Calm" design system
+   Tokens mirror bwoc-party (single source of truth across the
+   ecosystem). Consume via Tailwind utilities (bg-card, text-muted-
+   foreground, text-help-resolved, …) — never hardcode raw colors.
+   ============================================================ */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* semantic — reused from the ecosystem palette */
+  --color-help-open: var(--help-open);
+  --color-help-answered: var(--help-answered);
+  --color-help-resolved: var(--help-resolved);
+  --color-actor-human: var(--actor-human);
+  --color-actor-agent: var(--actor-agent);
+  --color-presence: var(--presence);
+
+  --font-sans:
+    "Geist Variable", "Noto Sans Thai Looped Variable", ui-sans-serif,
+    system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+}
+
 :root {
-  color-scheme: dark;
+  --background: oklch(0.994 0.002 230);
+  --foreground: oklch(0.22 0.02 250);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.02 250);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.02 250);
+  --primary: oklch(0.52 0.078 200);
+  --primary-foreground: oklch(0.99 0.005 200);
+  --secondary: oklch(0.965 0.006 235);
+  --secondary-foreground: oklch(0.30 0.02 250);
+  --muted: oklch(0.965 0.006 235);
+  --muted-foreground: oklch(0.52 0.015 250);
+  --accent: oklch(0.95 0.014 205);
+  --accent-foreground: oklch(0.30 0.03 220);
+  --destructive: oklch(0.585 0.18 26);
+  --border: oklch(0.912 0.006 240);
+  --input: oklch(0.912 0.006 240);
+  --ring: oklch(0.52 0.078 200);
+  --radius: 0.625rem;
+
+  --help-open: oklch(0.555 0.105 72);
+  --help-answered: oklch(0.55 0.085 235);
+  --help-resolved: oklch(0.55 0.082 155);
+  --actor-human: oklch(0.64 0.08 62);
+  --actor-agent: oklch(0.55 0.078 205);
+  --presence: oklch(0.66 0.16 150);
+}
+
+.dark {
+  --background: oklch(0.205 0.014 250);
+  --foreground: oklch(0.96 0.005 230);
+  --card: oklch(0.245 0.015 250);
+  --card-foreground: oklch(0.96 0.005 230);
+  --popover: oklch(0.245 0.015 250);
+  --popover-foreground: oklch(0.96 0.005 230);
+  --primary: oklch(0.72 0.10 200);
+  --primary-foreground: oklch(0.20 0.02 240);
+  --secondary: oklch(0.29 0.015 250);
+  --secondary-foreground: oklch(0.96 0.005 230);
+  --muted: oklch(0.29 0.015 250);
+  --muted-foreground: oklch(0.71 0.012 240);
+  --accent: oklch(0.32 0.022 215);
+  --accent-foreground: oklch(0.96 0.005 230);
+  --destructive: oklch(0.70 0.17 26);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.72 0.10 200);
+
+  --help-open: oklch(0.80 0.115 78);
+  --help-answered: oklch(0.74 0.10 235);
+  --help-resolved: oklch(0.76 0.10 155);
+  --actor-human: oklch(0.78 0.09 64);
+  --actor-agent: oklch(0.76 0.09 205);
+  --presence: oklch(0.76 0.17 150);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
 }

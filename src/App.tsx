@@ -1,32 +1,82 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgentEntry,
   ControllerInfo,
   FleetSnapshot,
   HostInfo,
   HostListEntry,
 } from "./types";
+import { Card, cn, Dot, Stat } from "./ui";
 
 const POLL_MS = 15_000;
 
-function StatusDot({ status }: { status: string }) {
-  const cls =
-    status === "active"
-      ? "bg-emerald-400"
-      : status === "stopped"
-        ? "bg-zinc-500"
-        : "bg-amber-400";
-  return <span className={`inline-block h-2.5 w-2.5 rounded-full ${cls}`} />;
+function statusColor(status: string): string {
+  switch (status) {
+    case "active":
+      return "bg-help-resolved";
+    case "stopped":
+      return "bg-muted-foreground";
+    default:
+      return "bg-help-open";
+  }
+}
+
+function StatusPill({ status }: { status: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-foreground/80">
+      <Dot className={statusColor(status)} />
+      {status}
+    </span>
+  );
+}
+
+function AgentRow({ a }: { a: AgentEntry }) {
+  return (
+    <tr className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40">
+      <td className="px-4 py-2.5">
+        <span className="inline-flex items-center gap-2">
+          <Dot className="bg-actor-agent/70" />
+          <span className="font-mono text-[13px]">{a.id}</span>
+        </span>
+      </td>
+      <td className="px-4 py-2.5">
+        <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+          {a.backend}
+        </span>
+      </td>
+      <td className="px-4 py-2.5">
+        <StatusPill status={a.status} />
+      </td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground tabular-nums">
+        {a.incarnated?.slice(0, 10)}
+      </td>
+    </tr>
+  );
+}
+
+function healthColor(status: string): string {
+  switch (status) {
+    case "ok":
+      return "bg-help-resolved";
+    case "warn":
+      return "bg-help-open";
+    default:
+      return "bg-muted-foreground";
+  }
 }
 
 export default function App() {
-  const [hosts, setHosts] = useState<HostListEntry[]>([{ name: "local", url: null }]);
+  const [hosts, setHosts] = useState<HostListEntry[]>([
+    { name: "local", url: null },
+  ]);
   const [activeHost, setActiveHost] = useState("local");
   const [snap, setSnap] = useState<FleetSnapshot | null>(null);
   const [host, setHost] = useState<HostInfo | null>(null);
   const [controller, setController] = useState<ControllerInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const refresh = useCallback(async (hostName: string) => {
     try {
@@ -56,112 +106,151 @@ export default function App() {
 
   const agents = snap?.agents ?? [];
   const health = snap?.health ?? [];
+  const activeCount = agents.filter((a) => a.status === "active").length;
   const okCount = health.filter((h) => h.status === "ok").length;
+  const loading = snap === null && !error;
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6 font-sans flex flex-col">
-      <header className="mb-6 flex items-baseline justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold">🎛️ BWOC Control Center</h1>
-          <p className="truncate text-sm text-zinc-400">
-            {host
-              ? `${host.hostname} · ${host.workspace} · ${host.version ?? "?"}`
-              : "host unreachable"}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <select
-            value={activeHost}
-            onChange={(e) => setActiveHost(e.target.value)}
-            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm"
-          >
-            {hosts.map((h) => (
-              <option key={h.name} value={h.name}>
-                {h.name === "local" ? "💻 local" : `🛰️ ${h.name}`}
-              </option>
-            ))}
-          </select>
-          <div className="text-right text-xs text-zinc-500">
-            {updatedAt && <p>updated {updatedAt.toLocaleTimeString()}</p>}
-            {health.length > 0 && (
-              <p>
-                health {okCount}/{health.length} ok
+    <main className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto flex max-w-3xl flex-col gap-5 p-6">
+        {/* ── header ─────────────────────────────────────── */}
+        <header className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="grid size-10 place-items-center rounded-xl bg-primary/15 text-lg ring-1 ring-primary/25">
+              🎛️
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold leading-tight">
+                BWOC Control Center
+              </h1>
+              <p className="truncate text-xs text-muted-foreground">
+                {host
+                  ? `${host.hostname} · ${host.workspace}${host.version ? ` · ${host.version}` : ""}`
+                  : "host unreachable"}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-col items-end gap-1.5">
+            <select
+              value={activeHost}
+              onChange={(e) => setActiveHost(e.target.value)}
+              className="rounded-lg border border-input bg-card px-3 py-1.5 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {hosts.map((h) => (
+                <option key={h.name} value={h.name}>
+                  {h.name === "local" ? "💻 local" : `🛰 ${h.name}`}
+                </option>
+              ))}
+            </select>
+            {updatedAt && (
+              <p className="text-[11px] text-muted-foreground tabular-nums">
+                updated {updatedAt.toLocaleTimeString()}
               </p>
             )}
           </div>
-        </div>
-      </header>
+        </header>
 
-      {error && (
-        <div className="mb-4 rounded-lg border border-red-800 bg-red-950/40 p-3 text-sm text-red-300">
-          {error}
-        </div>
-      )}
-
-      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-zinc-800 text-left text-xs uppercase tracking-wide text-zinc-500">
-              <th className="px-4 py-3">Agent</th>
-              <th className="px-4 py-3">Backend</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Incarnated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {agents.map((a) => (
-              <tr key={a.id} className="border-b border-zinc-800/60 last:border-0">
-                <td className="px-4 py-2.5 font-medium">{a.id}</td>
-                <td className="px-4 py-2.5 text-zinc-400">{a.backend}</td>
-                <td className="px-4 py-2.5">
-                  <span className="inline-flex items-center gap-2">
-                    <StatusDot status={a.status} />
-                    {a.status}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5 text-zinc-500">{a.incarnated}</td>
-              </tr>
-            ))}
-            {agents.length === 0 && !error && (
-              <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-zinc-500">
-                  loading fleet…
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </section>
-
-      {health.length > 0 && (
-        <section className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {health.map((h) => (
-            <div
-              key={h.condition}
-              className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 text-xs"
-            >
-              <p className="font-medium">
-                {h.status === "ok" ? "✅" : h.status === "warn" ? "⚠️" : "ℹ️"} {h.name}
-              </p>
-              <p className="mt-1 text-zinc-500">{h.finding}</p>
-            </div>
-          ))}
+        {/* ── stat row ───────────────────────────────────── */}
+        <section className="grid grid-cols-3 gap-3">
+          <Stat label="Agents" value={agents.length} />
+          <Stat
+            label="Active"
+            value={activeCount}
+            accent="text-help-resolved"
+            hint={`${agents.length - activeCount} idle`}
+          />
+          <Stat
+            label="Health"
+            value={
+              <span>
+                {okCount}
+                <span className="text-base text-muted-foreground">
+                  /{health.length || "–"}
+                </span>
+              </span>
+            }
+            accent="text-primary"
+            hint="signals ok"
+          />
         </section>
-      )}
 
-      {controller && (
-        <footer className="mt-auto pt-6 text-center text-[11px] text-zinc-600">
-          controller <span className="font-mono">{controller.id}</span> · pubkey{" "}
-          <button
-            className="font-mono hover:text-zinc-400"
-            title="click to copy"
-            onClick={() => navigator.clipboard.writeText(controller.public_key)}
-          >
-            {controller.public_key.slice(0, 16)}…
-          </button>{" "}
-          — register in a host&apos;s controllers.toml to connect
-        </footer>
-      )}
+        {/* ── error ──────────────────────────────────────── */}
+        {error && (
+          <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+
+        {/* ── fleet table ────────────────────────────────── */}
+        <Card>
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <h2 className="text-sm font-medium">Fleet</h2>
+            <span className="text-xs text-muted-foreground">
+              {agents.length} agent{agents.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                <th className="px-4 py-2.5 font-medium">Agent</th>
+                <th className="px-4 py-2.5 font-medium">Backend</th>
+                <th className="px-4 py-2.5 font-medium">Status</th>
+                <th className="px-4 py-2.5 font-medium">Incarnated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {agents.map((a) => (
+                <AgentRow key={a.id} a={a} />
+              ))}
+              {agents.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={4}
+                    className="px-4 py-10 text-center text-sm text-muted-foreground"
+                  >
+                    {loading ? "loading fleet…" : "no agents"}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </Card>
+
+        {/* ── health signals ─────────────────────────────── */}
+        {health.length > 0 && (
+          <section className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            {health.map((h) => (
+              <Card key={h.condition} className="px-3.5 py-3">
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  <Dot className={cn(healthColor(h.status), "shrink-0")} />
+                  {h.name}
+                </p>
+                <p className="mt-1 pl-4 text-xs text-muted-foreground">
+                  {h.finding}
+                </p>
+              </Card>
+            ))}
+          </section>
+        )}
+
+        {/* ── footer ─────────────────────────────────────── */}
+        {controller && (
+          <footer className="mt-auto pt-2 text-center text-[11px] text-muted-foreground">
+            controller <span className="font-mono">{controller.id}</span> ·{" "}
+            <button
+              className="font-mono underline-offset-2 hover:text-foreground hover:underline"
+              title="copy public key"
+              onClick={() => {
+                navigator.clipboard.writeText(controller.public_key);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1200);
+              }}
+            >
+              {copied ? "copied ✓" : `${controller.public_key.slice(0, 16)}…`}
+            </button>
+          </footer>
+        )}
+      </div>
     </main>
   );
 }
