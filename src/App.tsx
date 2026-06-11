@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { FleetSnapshot, HostInfo } from "./types";
+import type {
+  ControllerInfo,
+  FleetSnapshot,
+  HostInfo,
+  HostListEntry,
+} from "./types";
 
 const POLL_MS = 15_000;
 
@@ -15,51 +20,75 @@ function StatusDot({ status }: { status: string }) {
 }
 
 export default function App() {
+  const [hosts, setHosts] = useState<HostListEntry[]>([{ name: "local", url: null }]);
+  const [activeHost, setActiveHost] = useState("local");
   const [snap, setSnap] = useState<FleetSnapshot | null>(null);
   const [host, setHost] = useState<HostInfo | null>(null);
+  const [controller, setController] = useState<ControllerInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (hostName: string) => {
     try {
-      const s = await invoke<FleetSnapshot>("fleet_snapshot", {});
+      const s = await invoke<FleetSnapshot>("fleet_snapshot", { host: hostName });
       setSnap(s);
       setError(null);
       setUpdatedAt(new Date());
     } catch (e) {
       setError(String(e));
     }
+    invoke<HostInfo>("host_info", { host: hostName })
+      .then(setHost)
+      .catch(() => setHost(null));
   }, []);
 
   useEffect(() => {
-    invoke<HostInfo>("host_info", {}).then(setHost).catch(() => {});
-    refresh();
-    const t = setInterval(refresh, POLL_MS);
+    invoke<HostListEntry[]>("list_hosts").then(setHosts).catch(() => {});
+    invoke<ControllerInfo>("controller_info").then(setController).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setSnap(null);
+    refresh(activeHost);
+    const t = setInterval(() => refresh(activeHost), POLL_MS);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [activeHost, refresh]);
 
   const agents = snap?.agents ?? [];
   const health = snap?.health ?? [];
   const okCount = health.filter((h) => h.status === "ok").length;
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6 font-sans">
-      <header className="mb-6 flex items-baseline justify-between">
-        <div>
+    <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6 font-sans flex flex-col">
+      <header className="mb-6 flex items-baseline justify-between gap-4">
+        <div className="min-w-0">
           <h1 className="text-xl font-bold">🎛️ BWOC Control Center</h1>
-          <p className="text-sm text-zinc-400">
+          <p className="truncate text-sm text-zinc-400">
             {host
-              ? `${host.hostname} · ${host.workspace} · ${host.bwoc_version ?? "bwoc ?"}`
-              : "resolving host…"}
+              ? `${host.hostname} · ${host.workspace} · ${host.version ?? "?"}`
+              : "host unreachable"}
           </p>
         </div>
-        <div className="text-right text-xs text-zinc-500">
-          {updatedAt && <p>updated {updatedAt.toLocaleTimeString()}</p>}
-          {health.length > 0 && (
-            <p>
-              health {okCount}/{health.length} ok
-            </p>
-          )}
+        <div className="flex items-center gap-3">
+          <select
+            value={activeHost}
+            onChange={(e) => setActiveHost(e.target.value)}
+            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm"
+          >
+            {hosts.map((h) => (
+              <option key={h.name} value={h.name}>
+                {h.name === "local" ? "💻 local" : `🛰️ ${h.name}`}
+              </option>
+            ))}
+          </select>
+          <div className="text-right text-xs text-zinc-500">
+            {updatedAt && <p>updated {updatedAt.toLocaleTimeString()}</p>}
+            {health.length > 0 && (
+              <p>
+                health {okCount}/{health.length} ok
+              </p>
+            )}
+          </div>
         </div>
       </header>
 
@@ -118,6 +147,20 @@ export default function App() {
             </div>
           ))}
         </section>
+      )}
+
+      {controller && (
+        <footer className="mt-auto pt-6 text-center text-[11px] text-zinc-600">
+          controller <span className="font-mono">{controller.id}</span> · pubkey{" "}
+          <button
+            className="font-mono hover:text-zinc-400"
+            title="click to copy"
+            onClick={() => navigator.clipboard.writeText(controller.public_key)}
+          >
+            {controller.public_key.slice(0, 16)}…
+          </button>{" "}
+          — register in a host&apos;s controllers.toml to connect
+        </footer>
       )}
     </main>
   );

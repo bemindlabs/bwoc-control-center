@@ -8,10 +8,7 @@
 //! Deployment contract (guard-the-gate): bind LOOPBACK ONLY and expose via
 //! `tailscale serve` — never a public port.
 
-mod auth;
-mod bwoc;
-mod routes;
-
+use bwocd::{auth, routes, AppState};
 use clap::Parser;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -34,12 +31,6 @@ struct Args {
     /// Controller registry (TOML). Default: <workspace>/.bwoc/bwocd/controllers.toml
     #[arg(long)]
     controllers: Option<PathBuf>,
-}
-
-pub struct AppState {
-    pub workspace: PathBuf,
-    pub registry: auth::ControllerRegistry,
-    pub nonces: auth::NonceStore,
 }
 
 #[tokio::main]

@@ -28,5 +28,15 @@ export type FleetSnapshot = {
 export type HostInfo = {
   hostname: string;
   workspace: string;
-  bwoc_version: string | null;
+  version: string | null;
+};
+
+export type HostListEntry = {
+  name: string;
+  url: string | null;
+};
+
+export type ControllerInfo = {
+  id: string;
+  public_key: string;
 };

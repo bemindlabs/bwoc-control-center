@@ -1,15 +1,15 @@
 //! BWOC Control Center — Tauri core.
 //!
-//! Phase 1 ships the **LocalShell** transport only: every command shells the
-//! `bwoc` CLI with `--json` against a workspace on this machine (the same
-//! pattern as bwoc-devices-app). The **RemoteHttp** transport (signed requests
-//! to a `bwocd` over the tailnet) plugs into the same command surface later —
-//! the frontend never knows which transport served it.
+//! Commands resolve a `Transport` per call (DESIGN.md §2): host=None/"local"
+//! shells `bwoc --json` on this machine; any other host name maps through
+//! hosts.toml to a bwocd reached with ed25519-signed requests. The frontend
+//! is transport-blind.
 
+mod config;
 mod transport;
 
 use serde::Serialize;
-use transport::LocalShell;
+use transport::Transport;
 
 #[derive(Serialize)]
 pub struct FleetSnapshot {
@@ -22,50 +22,121 @@ pub struct FleetSnapshot {
 pub struct HostInfo {
     hostname: String,
     workspace: String,
-    bwoc_version: Option<String>,
+    version: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct HostListEntry {
+    name: String,
+    url: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ControllerInfo {
+    id: String,
+    public_key: String,
 }
 
 /// Full fleet view: registry + the seven Aparihāniya health signals.
 #[tauri::command]
-async fn fleet_snapshot(workspace: Option<String>) -> Result<FleetSnapshot, String> {
-    let t = LocalShell::resolve(workspace)?;
-    // `bwoc list --json` returns `{"agents": [...]}` — unwrap to the array.
-    let agents = t.bwoc_json(&["list"]).await?["agents"].take();
-    // `fleet health` is report-only; tolerate failure so a half-healthy
-    // workspace still renders its agent list.
-    let health = t
-        .bwoc_json(&["fleet", "health"])
-        .await
-        .unwrap_or(serde_json::Value::Null);
-    Ok(FleetSnapshot {
-        workspace: t.workspace().to_string(),
-        agents,
-        health,
-    })
+async fn fleet_snapshot(
+    host: Option<String>,
+    workspace: Option<String>,
+) -> Result<FleetSnapshot, String> {
+    match Transport::resolve(host, workspace)? {
+        Transport::Local(t) => {
+            // `bwoc list --json` returns `{"agents": [...]}` — unwrap.
+            let agents = t.bwoc_json(&["list"]).await?["agents"].take();
+            // `fleet health` is report-only; tolerate failure so a half-healthy
+            // workspace still renders its agent list.
+            let health = t
+                .bwoc_json(&["fleet", "health"])
+                .await
+                .unwrap_or(serde_json::Value::Null);
+            Ok(FleetSnapshot {
+                workspace: t.workspace().to_string(),
+                agents,
+                health,
+            })
+        }
+        Transport::Remote(r) => {
+            let mut v = r.get_json("/fleet").await?;
+            Ok(FleetSnapshot {
+                workspace: v["workspace"].as_str().unwrap_or("").to_string(),
+                agents: v["agents"].take(),
+                health: v["health"].take(),
+            })
+        }
+    }
 }
 
-/// Read one agent's inbox (most recent first, CLI default ordering).
+/// Read one agent's inbox.
 #[tauri::command]
 async fn agent_inbox(
+    host: Option<String>,
     workspace: Option<String>,
     agent: String,
 ) -> Result<serde_json::Value, String> {
-    let t = LocalShell::resolve(workspace)?;
-    t.bwoc_json(&["inbox", &agent]).await
+    if !agent
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err("invalid agent id".into());
+    }
+    match Transport::resolve(host, workspace)? {
+        Transport::Local(t) => t.bwoc_json(&["inbox", &agent]).await,
+        Transport::Remote(r) => r.get_json(&format!("/agents/{agent}/inbox")).await,
+    }
 }
 
-/// Self-describe this host (the LocalShell analogue of bwocd's `/hosts`).
+/// Self-describe one host (local analogue of bwocd's `/hosts`).
 #[tauri::command]
-async fn host_info(workspace: Option<String>) -> Result<HostInfo, String> {
-    let t = LocalShell::resolve(workspace)?;
-    Ok(HostInfo {
-        hostname: hostname(),
-        workspace: t.workspace().to_string(),
-        bwoc_version: t.bwoc_version().await,
+async fn host_info(host: Option<String>, workspace: Option<String>) -> Result<HostInfo, String> {
+    match Transport::resolve(host, workspace)? {
+        Transport::Local(t) => Ok(HostInfo {
+            hostname: local_hostname(),
+            workspace: t.workspace().to_string(),
+            version: t.bwoc_version().await,
+        }),
+        Transport::Remote(r) => {
+            let v = r.get_json("/hosts").await?;
+            Ok(HostInfo {
+                hostname: v["hostname"].as_str().unwrap_or("?").to_string(),
+                workspace: v["workspace"].as_str().unwrap_or("").to_string(),
+                version: v["bwocd_version"].as_str().map(|s| format!("bwocd {s}")),
+            })
+        }
+    }
+}
+
+/// Hosts the UI can switch between: "local" + everything in hosts.toml.
+#[tauri::command]
+fn list_hosts() -> Result<Vec<HostListEntry>, String> {
+    let mut out = vec![HostListEntry {
+        name: "local".into(),
+        url: None,
+    }];
+    for h in config::load_hosts()? {
+        out.push(HostListEntry {
+            name: h.name,
+            url: Some(h.url),
+        });
+    }
+    Ok(out)
+}
+
+/// This install's controller identity — shown in the UI so the public key can
+/// be registered in a bwocd's controllers.toml (QR enrollment supersedes this).
+#[tauri::command]
+fn controller_info() -> Result<ControllerInfo, String> {
+    let c = config::load_or_create_controller()?;
+    Ok(ControllerInfo {
+        public_key: cc_signing::public_key_hex(&c.seed_hex)?,
+        id: c.id,
     })
 }
 
-fn hostname() -> String {
+fn local_hostname() -> String {
     std::process::Command::new("hostname")
         .output()
         .ok()
@@ -81,7 +152,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             fleet_snapshot,
             agent_inbox,
-            host_info
+            host_info,
+            list_hosts,
+            controller_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

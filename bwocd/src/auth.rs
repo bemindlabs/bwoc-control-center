@@ -18,13 +18,12 @@
 //! detail to the caller).
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-/// ±5 minutes, matching bwoc-party's SKEW_MS.
-pub const SKEW_SECS: i64 = 300;
+// One canonicalizer for both sides of the wire — drift-proof by construction.
+pub use cc_signing::{canonical_path, sha256_hex, signing_payload, SKEW_SECS};
 
 #[derive(Debug, PartialEq)]
 pub enum Refusal {
@@ -87,6 +86,10 @@ impl ControllerRegistry {
         self.by_id.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.by_id.is_empty()
+    }
+
     fn key_of(&self, id: &str) -> Option<&VerifyingKey> {
         self.by_id.get(id).map(|(k, _)| k)
     }
@@ -109,37 +112,6 @@ impl NonceStore {
     }
 }
 
-/// The exact canonical payload both sides sign over. Field order IS the
-/// lexicographic key order — keep it byte-identical with the client.
-pub fn signing_payload(
-    sender: &str,
-    method: &str,
-    path: &str,
-    nonce: &str,
-    ts: &str,
-    body_hash: &str,
-) -> String {
-    format!(
-        "{{\"bodyHash\":\"{body_hash}\",\"method\":\"{method}\",\"nonce\":\"{nonce}\",\"path\":\"{path}\",\"sender\":\"{sender}\",\"ts\":\"{ts}\"}}",
-        method = method.to_uppercase()
-    )
-}
-
-/// Canonical request path: pathname + query entries sorted by key then value.
-pub fn canonical_path(path: &str, query: Option<&str>) -> String {
-    let Some(q) = query.filter(|q| !q.is_empty()) else {
-        return path.to_string();
-    };
-    let mut entries: Vec<(&str, &str)> = q
-        .split('&')
-        .filter(|s| !s.is_empty())
-        .map(|kv| kv.split_once('=').unwrap_or((kv, "")))
-        .collect();
-    entries.sort();
-    let qs: Vec<String> = entries.iter().map(|(k, v)| format!("{k}={v}")).collect();
-    format!("{path}?{}", qs.join("&"))
-}
-
 pub struct SignedHeaders<'a> {
     pub sender: &'a str,
     pub nonce: &'a str,
@@ -160,7 +132,7 @@ pub fn verify(
 ) -> Result<(), Refusal> {
     let key = registry.key_of(h.sender).ok_or(Refusal::UnknownSender)?;
 
-    let actual = hex::encode(Sha256::digest(body));
+    let actual = sha256_hex(body);
     if actual != h.body_sha256.to_lowercase() {
         return Err(Refusal::BodyHashMismatch);
     }
@@ -210,7 +182,7 @@ mod tests {
         ts: &str,
         body: &[u8],
     ) -> (String, String) {
-        let body_hash = hex::encode(Sha256::digest(body));
+        let body_hash = sha256_hex(body);
         let payload = signing_payload(sender, method, path, nonce, ts, &body_hash);
         let sig = key.sign(payload.as_bytes());
         (body_hash, hex::encode(sig.to_bytes()))
