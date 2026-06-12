@@ -5,7 +5,7 @@
 //! (cc-signing — the SAME canonicalizer bwocd verifies with) and talks to a
 //! `bwocd` over the tailnet. The frontend never knows which one served it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub enum Transport {
     Local(LocalShell),
@@ -13,18 +13,23 @@ pub enum Transport {
 }
 
 impl Transport {
-    /// `host` = None/"local" → LocalShell; otherwise a host name from
-    /// hosts.toml → RemoteHttp against its base URL.
-    pub fn resolve(host: Option<String>, workspace: Option<String>) -> Result<Self, String> {
+    /// `host` = None/"local" → LocalShell; otherwise a host name from the host
+    /// list → RemoteHttp against its base URL. `cfg_dir` is the app's writable
+    /// config dir (where the controller + hosts live).
+    pub fn resolve(
+        cfg_dir: &Path,
+        host: Option<String>,
+        workspace: Option<String>,
+    ) -> Result<Self, String> {
         match host.as_deref() {
             None | Some("local") => Ok(Self::Local(LocalShell::resolve(workspace)?)),
             Some(name) => {
-                let hosts = crate::config::load_hosts()?;
+                let hosts = crate::config::load_hosts(cfg_dir)?;
                 let entry = hosts
                     .into_iter()
                     .find(|h| h.name == name)
-                    .ok_or_else(|| format!("unknown host '{name}' (not in hosts.toml)"))?;
-                let ctrl = crate::config::load_or_create_controller()?;
+                    .ok_or_else(|| format!("unknown host '{name}'"))?;
+                let ctrl = crate::config::load_or_create_controller(cfg_dir)?;
                 Ok(Self::Remote(RemoteHttp {
                     base: entry.url.trim_end_matches('/').to_string(),
                     controller: ctrl,
