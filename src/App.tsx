@@ -34,21 +34,21 @@ function StatusPill({ status }: { status: string }) {
 function AgentRow({ a }: { a: AgentEntry }) {
   return (
     <tr className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40">
-      <td className="px-4 py-2.5">
-        <span className="inline-flex items-center gap-2">
-          <Dot className="bg-actor-agent/70" />
-          <span className="font-mono text-[13px]">{a.id}</span>
+      <td className="px-3 py-2.5 sm:px-4">
+        <span className="flex items-center gap-2">
+          <Dot className="shrink-0 bg-actor-agent/70" />
+          <span className="whitespace-nowrap font-mono text-[13px]">{a.id}</span>
         </span>
       </td>
-      <td className="px-4 py-2.5">
+      <td className="px-3 py-2.5 sm:px-4">
         <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
           {a.backend}
         </span>
       </td>
-      <td className="px-4 py-2.5">
+      <td className="px-3 py-2.5 sm:px-4">
         <StatusPill status={a.status} />
       </td>
-      <td className="px-4 py-2.5 text-xs text-muted-foreground tabular-nums">
+      <td className="hidden px-4 py-2.5 text-xs text-muted-foreground tabular-nums sm:table-cell">
         {a.incarnated?.slice(0, 10)}
       </td>
     </tr>
@@ -119,30 +119,30 @@ export default function App() {
   const loading = snap === null && !error;
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex max-w-3xl flex-col gap-5 p-6">
+    <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
+      <div className="mx-auto flex max-w-3xl flex-col gap-5 p-4 sm:p-6">
         {/* ── header ─────────────────────────────────────── */}
-        <header className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="grid size-10 place-items-center rounded-xl bg-primary/15 text-lg ring-1 ring-primary/25">
+        <header className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/15 text-lg ring-1 ring-primary/25">
               🎛️
             </div>
             <div className="min-w-0">
-              <h1 className="text-lg font-semibold leading-tight">
+              <h1 className="text-base font-semibold leading-tight sm:text-lg">
                 BWOC Control Center
               </h1>
               <p className="truncate text-xs text-muted-foreground">
                 {host
-                  ? `${host.hostname} · ${host.workspace}${host.version ? ` · ${host.version}` : ""}`
+                  ? `${host.hostname}${host.version ? ` · ${host.version}` : ""}`
                   : "host unreachable"}
               </p>
             </div>
           </div>
-          <div className="flex flex-col items-end gap-1.5">
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
             <select
               value={activeHost}
               onChange={(e) => setActiveHost(e.target.value)}
-              className="rounded-lg border border-input bg-card px-3 py-1.5 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-lg border border-input bg-card px-2.5 py-1.5 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {hosts.map((h) => (
                 <option key={h.name} value={h.name}>
@@ -152,7 +152,7 @@ export default function App() {
             </select>
             {updatedAt && (
               <p className="text-[11px] text-muted-foreground tabular-nums">
-                updated {updatedAt.toLocaleTimeString()}
+                {updatedAt.toLocaleTimeString()}
               </p>
             )}
           </div>
@@ -197,31 +197,35 @@ export default function App() {
               {agents.length} agent{agents.length === 1 ? "" : "s"}
             </span>
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-4 py-2.5 font-medium">Agent</th>
-                <th className="px-4 py-2.5 font-medium">Backend</th>
-                <th className="px-4 py-2.5 font-medium">Status</th>
-                <th className="px-4 py-2.5 font-medium">Incarnated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {agents.map((a) => (
-                <AgentRow key={a.id} a={a} />
-              ))}
-              {agents.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={4}
-                    className="px-4 py-10 text-center text-sm text-muted-foreground"
-                  >
-                    {loading ? "loading fleet…" : "no agents"}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <th className="px-3 py-2.5 font-medium sm:px-4">Agent</th>
+                  <th className="px-3 py-2.5 font-medium sm:px-4">Backend</th>
+                  <th className="px-3 py-2.5 font-medium sm:px-4">Status</th>
+                  <th className="hidden px-4 py-2.5 font-medium sm:table-cell">
+                    Incarnated
+                  </th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {agents.map((a) => (
+                  <AgentRow key={a.id} a={a} />
+                ))}
+                {agents.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="px-4 py-10 text-center text-sm text-muted-foreground"
+                    >
+                      {loading ? "loading fleet…" : "no agents"}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </Card>
 
         {/* ── health signals ─────────────────────────────── */}
