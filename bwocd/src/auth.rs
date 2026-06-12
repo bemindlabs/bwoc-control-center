@@ -131,7 +131,39 @@ pub fn verify(
     now_epoch: i64,
 ) -> Result<(), Refusal> {
     let key = registry.key_of(h.sender).ok_or(Refusal::UnknownSender)?;
+    verify_against_key(nonces, h, key, method, canonical_path, body, now_epoch)
+}
 
+/// Verify a request whose key is supplied directly rather than looked up — used
+/// by enrollment, where the request is **self-signed** by the key being
+/// enrolled (proving the sender owns its private key). Same fail-closed checks
+/// as [`verify`] minus the registry lookup.
+pub fn verify_with_key(
+    nonces: &NonceStore,
+    h: &SignedHeaders<'_>,
+    public_key_hex: &str,
+    method: &str,
+    canonical_path: &str,
+    body: &[u8],
+    now_epoch: i64,
+) -> Result<(), Refusal> {
+    let bytes: [u8; 32] = hex::decode(public_key_hex)
+        .map_err(|_| Refusal::MalformedHeaders)?
+        .try_into()
+        .map_err(|_| Refusal::MalformedHeaders)?;
+    let key = VerifyingKey::from_bytes(&bytes).map_err(|_| Refusal::BadSignature)?;
+    verify_against_key(nonces, h, &key, method, canonical_path, body, now_epoch)
+}
+
+fn verify_against_key(
+    nonces: &NonceStore,
+    h: &SignedHeaders<'_>,
+    key: &VerifyingKey,
+    method: &str,
+    canonical_path: &str,
+    body: &[u8],
+    now_epoch: i64,
+) -> Result<(), Refusal> {
     let actual = sha256_hex(body);
     if actual != h.body_sha256.to_lowercase() {
         return Err(Refusal::BodyHashMismatch);
