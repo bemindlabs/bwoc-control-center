@@ -1,12 +1,15 @@
 //! App-side configuration: the controller identity (this install's ed25519
 //! keypair) and the remote host list.
 //!
-//! Lives in `~/.config/bwoc-control-center/` for phase 1 (file mode 0600 on
-//! the key). Mobile enrollment moves the seed into Keychain/Keystore — the
-//! `Controller` shape stays the same.
+//! The config dir is resolved per-platform by the caller via Tauri's
+//! `app_config_dir()` — crucially, on iOS the app sandbox root is NOT writable
+//! (only Library/Documents/tmp are), so a hardcoded `~/.config` fails with
+//! EPERM. A desktop install that still has the legacy `~/.config/...` files is
+//! migrated transparently on first read. Mobile enrollment moves the seed into
+//! Keychain/Keystore later — the `Controller` shape stays the same.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Controller {
@@ -27,14 +30,34 @@ struct HostsFile {
     host: Vec<HostEntry>,
 }
 
-fn config_dir() -> Result<PathBuf, String> {
-    let home = std::env::var_os("HOME").ok_or("no HOME")?;
-    Ok(PathBuf::from(home).join(".config/bwoc-control-center"))
+/// The pre-`app_config_dir` location, kept only to migrate existing desktop
+/// installs (the Mac's registered controller lives here).
+fn legacy_file(name: &str) -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|h| {
+        PathBuf::from(h)
+            .join(".config/bwoc-control-center")
+            .join(name)
+    })
 }
 
-/// Load the controller identity, generating one on first run.
-pub fn load_or_create_controller() -> Result<Controller, String> {
-    let dir = config_dir()?;
+/// Copy a legacy `~/.config/...` file into the new dir if the new one is absent.
+fn migrate_legacy(dir: &Path, name: &str) {
+    let dest = dir.join(name);
+    if dest.exists() {
+        return;
+    }
+    if let Some(src) = legacy_file(name) {
+        if src.is_file() {
+            let _ = std::fs::create_dir_all(dir);
+            let _ = std::fs::copy(&src, &dest);
+        }
+    }
+}
+
+/// Load the controller identity, generating one on first run. `dir` is the
+/// app's writable config dir (Tauri `app_config_dir()`).
+pub fn load_or_create_controller(dir: &Path) -> Result<Controller, String> {
+    migrate_legacy(dir, "controller.toml");
     let path = dir.join("controller.toml");
     if path.is_file() {
         let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -50,9 +73,9 @@ pub fn load_or_create_controller() -> Result<Controller, String> {
         seed_hex: hex::encode(seed),
     };
 
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create config dir: {e}"))?;
     let body = toml::to_string_pretty(&ctrl).map_err(|e| e.to_string())?;
-    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    std::fs::write(&path, body).map_err(|e| format!("cannot write controller: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -78,9 +101,10 @@ fn default_hosts() -> Vec<HostEntry> {
 }
 
 /// Load the remote host list, falling back to the built-in defaults when
-/// hosts.toml is absent or empty.
-pub fn load_hosts() -> Result<Vec<HostEntry>, String> {
-    let path = config_dir()?.join("hosts.toml");
+/// hosts.toml is absent or empty. `dir` is the app's writable config dir.
+pub fn load_hosts(dir: &Path) -> Result<Vec<HostEntry>, String> {
+    migrate_legacy(dir, "hosts.toml");
+    let path = dir.join("hosts.toml");
     if !path.is_file() {
         return Ok(default_hosts());
     }

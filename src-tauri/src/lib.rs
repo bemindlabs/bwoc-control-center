@@ -9,7 +9,17 @@ mod config;
 mod transport;
 
 use serde::Serialize;
+use std::path::PathBuf;
+use tauri::Manager;
 use transport::Transport;
+
+/// The app's writable per-platform config dir (Tauri resolves this correctly on
+/// iOS — under Library/, which is writable — unlike a hardcoded `~/.config`).
+fn cfg_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map_err(|e| format!("no app config dir: {e}"))
+}
 
 #[derive(Serialize)]
 pub struct FleetSnapshot {
@@ -40,10 +50,11 @@ pub struct ControllerInfo {
 /// Full fleet view: registry + the seven Aparihāniya health signals.
 #[tauri::command]
 async fn fleet_snapshot(
+    app: tauri::AppHandle,
     host: Option<String>,
     workspace: Option<String>,
 ) -> Result<FleetSnapshot, String> {
-    match Transport::resolve(host, workspace)? {
+    match Transport::resolve(&cfg_dir(&app)?, host, workspace)? {
         Transport::Local(t) => {
             // `bwoc list --json` returns `{"agents": [...]}` — unwrap.
             let agents = t.bwoc_json(&["list"]).await?["agents"].take();
@@ -73,6 +84,7 @@ async fn fleet_snapshot(
 /// Read one agent's inbox.
 #[tauri::command]
 async fn agent_inbox(
+    app: tauri::AppHandle,
     host: Option<String>,
     workspace: Option<String>,
     agent: String,
@@ -83,7 +95,7 @@ async fn agent_inbox(
     {
         return Err("invalid agent id".into());
     }
-    match Transport::resolve(host, workspace)? {
+    match Transport::resolve(&cfg_dir(&app)?, host, workspace)? {
         Transport::Local(t) => t.bwoc_json(&["inbox", &agent]).await,
         Transport::Remote(r) => r.get_json(&format!("/agents/{agent}/inbox")).await,
     }
@@ -91,8 +103,12 @@ async fn agent_inbox(
 
 /// Self-describe one host (local analogue of bwocd's `/hosts`).
 #[tauri::command]
-async fn host_info(host: Option<String>, workspace: Option<String>) -> Result<HostInfo, String> {
-    match Transport::resolve(host, workspace)? {
+async fn host_info(
+    app: tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+) -> Result<HostInfo, String> {
+    match Transport::resolve(&cfg_dir(&app)?, host, workspace)? {
         Transport::Local(t) => Ok(HostInfo {
             hostname: local_hostname(),
             workspace: t.workspace().to_string(),
@@ -113,14 +129,14 @@ async fn host_info(host: Option<String>, workspace: Option<String>) -> Result<Ho
 /// against this machine's workspace); mobile omits it — there is no `bwoc` CLI
 /// or workspace in the app sandbox, so only remote hosts make sense.
 #[tauri::command]
-fn list_hosts() -> Result<Vec<HostListEntry>, String> {
+fn list_hosts(app: tauri::AppHandle) -> Result<Vec<HostListEntry>, String> {
     let mut out = Vec::new();
     #[cfg(not(mobile))]
     out.push(HostListEntry {
         name: "local".into(),
         url: None,
     });
-    for h in config::load_hosts()? {
+    for h in config::load_hosts(&cfg_dir(&app)?)? {
         out.push(HostListEntry {
             name: h.name,
             url: Some(h.url),
@@ -132,8 +148,8 @@ fn list_hosts() -> Result<Vec<HostListEntry>, String> {
 /// This install's controller identity — shown in the UI so the public key can
 /// be registered in a bwocd's controllers.toml (QR enrollment supersedes this).
 #[tauri::command]
-fn controller_info() -> Result<ControllerInfo, String> {
-    let c = config::load_or_create_controller()?;
+fn controller_info(app: tauri::AppHandle) -> Result<ControllerInfo, String> {
+    let c = config::load_or_create_controller(&cfg_dir(&app)?)?;
     Ok(ControllerInfo {
         public_key: cc_signing::public_key_hex(&c.seed_hex)?,
         id: c.id,
