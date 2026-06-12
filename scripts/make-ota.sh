@@ -19,10 +19,15 @@ OUT="out/ota"
 rm -rf "$OUT"; mkdir -p "$OUT"
 cp "$IPA" "$OUT/app.ipa"
 
-# read identity from the built app
-APP_PLIST=$(unzip -p "$IPA" "Payload/*/Info.plist" 2>/dev/null | head -c 200000)
-BID=$(printf '%s' "$APP_PLIST" | plutil -extract CFBundleIdentifier raw - 2>/dev/null || echo "tech.bemind.bwocControlCenter")
-VER=$(printf '%s' "$APP_PLIST" | plutil -extract CFBundleShortVersionString raw - 2>/dev/null || echo "0.1.0")
+# read identity from the built app — extract the (binary) Info.plist to a real
+# file; piping it through `head`/`printf` mangles binary plists and silently
+# falls back to wrong defaults.
+PL_TMP=$(mktemp -d)
+unzip -q -o "$IPA" "Payload/*/Info.plist" -d "$PL_TMP"
+PL=$(find "$PL_TMP" -name Info.plist -path "*.app/Info.plist" | head -1)
+BID=$(plutil -extract CFBundleIdentifier raw "$PL" 2>/dev/null || echo "tech.bemind.bwocControlCenter")
+VER=$(plutil -extract CFBundleShortVersionString raw "$PL" 2>/dev/null || echo "0.1.0")
+rm -rf "$PL_TMP"
 TITLE="BWOC Control Center"
 
 cat > "$OUT/manifest.plist" <<PLIST
