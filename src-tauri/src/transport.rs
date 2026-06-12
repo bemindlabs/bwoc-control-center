@@ -164,15 +164,64 @@ impl RemoteHttp {
             .await
             .map_err(|e| format!("bwocd unreachable: {e}"))?;
         let status = res.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            // Not trusted yet → self-enroll (best-effort) and tell the user to
+            // approve. The next poll succeeds once the operator promotes us.
+            let enrolled = self.enroll().await.is_ok();
+            return Err(if enrolled {
+                format!(
+                    "awaiting approval — controller '{}' requested access to this host",
+                    self.controller.id
+                )
+            } else {
+                format!(
+                    "not authorized on this host (controller '{}')",
+                    self.controller.id
+                )
+            });
+        }
         if !status.is_success() {
             return Err(format!(
-                "bwocd {}: {} (controller '{}' registered on that host?)",
+                "bwocd {}: {}",
                 status,
-                res.text().await.unwrap_or_default(),
-                self.controller.id
+                res.text().await.unwrap_or_default()
             ));
         }
         res.json().await.map_err(|e| format!("bad bwocd JSON: {e}"))
+    }
+
+    /// Self-signed POST /enroll: hand this controller's public key to the host
+    /// as a pending enrollment for the operator to approve.
+    async fn enroll(&self) -> Result<(), String> {
+        let public_key = cc_signing::public_key_hex(&self.controller.seed_hex)?;
+        let body =
+            serde_json::json!({ "id": self.controller.id, "public_key": public_key }).to_string();
+        let canonical = cc_signing::canonical_path("/enroll", None);
+        let headers = cc_signing::build_signed_headers(
+            &self.controller.id,
+            &self.controller.seed_hex,
+            "POST",
+            &canonical,
+            body.as_bytes(),
+        )?;
+        let client = reqwest::Client::new();
+        let mut req = client
+            .post(format!("{}/enroll", self.base))
+            .header("content-type", "application/json")
+            .body(body);
+        for (k, v) in headers {
+            req = req.header(k, v);
+        }
+        let res = req
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| format!("enroll failed: {e}"))?;
+        if res.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!("enroll rejected: {}", res.status()))
+        }
     }
 }
 

@@ -9,7 +9,7 @@ use axum::{
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use std::sync::Arc;
@@ -34,8 +34,97 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/health",
             get(|| async { Json(serde_json::json!({"ok": true})) }),
         )
+        // /enroll is self-authenticating (signature checked against the body's
+        // own key), so it sits outside the registry middleware.
+        .route("/enroll", post(enroll))
         .merge(signed)
         .with_state(state)
+}
+
+#[derive(serde::Deserialize)]
+struct EnrollBody {
+    id: String,
+    public_key: String,
+}
+
+/// Self-signed enrollment: record a controller's public key as **pending** for
+/// an operator to approve. The request must be signed by the key it carries
+/// (proving ownership) and the X-BWOC-Agent header must equal the body id.
+async fn enroll(State(state): State<Arc<AppState>>, req: Request) -> Response {
+    let (parts, body) = req.into_parts();
+    let bytes = match axum::body::to_bytes(body, 64 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+    };
+    let parsed: EnrollBody = match serde_json::from_slice(&bytes) {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::BAD_REQUEST, "expected {id, public_key}").into_response(),
+    };
+
+    let h = |name: &str| -> String {
+        parts
+            .headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string()
+    };
+    let (sender, nonce, ts, body_sha, sig) = (
+        h("x-bwoc-agent"),
+        h("x-bwoc-nonce"),
+        h("x-bwoc-timestamp"),
+        h("x-bwoc-body-sha256"),
+        h("x-bwoc-signature"),
+    );
+    if sender != parsed.id {
+        return (StatusCode::BAD_REQUEST, "sender/id mismatch").into_response();
+    }
+    let headers = auth::SignedHeaders {
+        sender: &sender,
+        nonce: &nonce,
+        ts: &ts,
+        body_sha256: &body_sha,
+        signature: &sig,
+    };
+    let canonical = auth::canonical_path(parts.uri.path(), parts.uri.query());
+    let now = chrono::Utc::now();
+
+    match auth::verify_with_key(
+        &state.nonces,
+        &headers,
+        &parsed.public_key,
+        parts.method.as_str(),
+        &canonical,
+        &bytes,
+        now.timestamp(),
+    ) {
+        Ok(()) => match crate::enroll::record(
+            &state.workspace,
+            &parsed.id,
+            &parsed.public_key,
+            &now.to_rfc3339(),
+        ) {
+            Ok(()) => {
+                eprintln!(
+                    "bwocd: ENROLL pending {} (awaiting operator approval)",
+                    parsed.id
+                );
+                (
+                    StatusCode::ACCEPTED,
+                    "enrollment requested — awaiting approval",
+                )
+                    .into_response()
+            }
+            Err(e) => {
+                eprintln!("bwocd: enroll record error: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+        },
+        Err(reason) => {
+            eprintln!("bwocd: ENROLL refused {sender:?} reason={reason:?}");
+            (StatusCode::UNAUTHORIZED, "self-signed request required").into_response()
+        }
+    }
 }
 
 async fn verify_signed_request(

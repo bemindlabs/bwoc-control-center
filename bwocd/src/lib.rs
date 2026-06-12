@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod bwoc;
+pub mod enroll;
 pub mod routes;
 
 use std::path::PathBuf;
