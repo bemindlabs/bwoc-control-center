@@ -146,7 +146,15 @@ async fn chat_send(
     }
     let out = match Transport::resolve(&cfg_dir(&app)?, host, workspace)? {
         Transport::Local(t) => {
-            t.bwoc_json(&["run", &agent, "--task", &prompt, "--timeout", "120"])
+            // Match bwocd: prepend the agent's saved memory so the local chat
+            // turn is incarnated the same way (persona auto-loads via cwd).
+            let task = match transport::load_agent_memory(t.workspace_path(), &agent) {
+                Some(mem) => format!(
+                    "# Your saved memory — consult this before replying\n\n{mem}\n\n---\n\n{prompt}"
+                ),
+                None => prompt.clone(),
+            };
+            t.bwoc_json(&["run", &agent, "--task", &task, "--timeout", "120"])
                 .await?
         }
         Transport::Remote(r) => {

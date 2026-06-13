@@ -272,10 +272,27 @@ async fn chat(
         return (StatusCode::BAD_REQUEST, "empty prompt").into_response();
     }
     let timeout = body.timeout.unwrap_or(120).clamp(5, 600).to_string();
-    eprintln!("bwocd: CHAT {id} ({} chars)", body.prompt.len());
+    // Incarnate fully: persona (AGENTS.md) is loaded by `bwoc run`; prepend the
+    // agent's saved memory so the turn has its prior context too.
+    let task = match crate::agentmem::load(&state.workspace, &id) {
+        Some(mem) => format!(
+            "# Your saved memory — consult this before replying\n\n{mem}\n\n---\n\n{}",
+            body.prompt
+        ),
+        None => body.prompt.clone(),
+    };
+    eprintln!(
+        "bwocd: CHAT {id} ({} chars prompt, memory {})",
+        body.prompt.len(),
+        if task.len() > body.prompt.len() {
+            "loaded"
+        } else {
+            "none"
+        }
+    );
     match bwoc_json(
         &state.workspace,
-        &["run", &id, "--task", &body.prompt, "--timeout", &timeout],
+        &["run", &id, "--task", &task, "--timeout", &timeout],
     )
     .await
     {
