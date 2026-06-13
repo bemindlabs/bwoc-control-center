@@ -10,6 +10,8 @@ import type {
 import { Card, cn, Dot, Stat } from "./ui";
 import Chat from "./Chat";
 import Settings from "./Settings";
+import Home from "./Home";
+import Onboarding from "./Onboarding";
 
 const POLL_MS = 15_000;
 
@@ -82,7 +84,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [chatAgent, setChatAgent] = useState<string | null>(null);
-  const [tab, setTab] = useState<"fleet" | "settings">("fleet");
+  const [tab, setTab] = useState<"home" | "fleet" | "settings">("home");
+  const [onboarded, setOnboarded] = useState(
+    () => localStorage.getItem("bwoc.onboarded") === "1",
+  );
 
   const refresh = useCallback(async (hostName: string) => {
     try {
@@ -124,6 +129,18 @@ export default function App() {
   const okCount = health.filter((h) => h.status === "ok").length;
   const loading = snap === null && !error;
 
+  if (!onboarded) {
+    return (
+      <Onboarding
+        controller={controller}
+        onDone={() => {
+          localStorage.setItem("bwoc.onboarded", "1");
+          setOnboarded(true);
+        }}
+      />
+    );
+  }
+
   if (chatAgent) {
     return (
       <Chat
@@ -141,7 +158,17 @@ export default function App() {
         className="flex-1 overflow-y-auto"
         style={{ paddingTop: "env(safe-area-inset-top)" }}
       >
-        {tab === "settings" ? (
+        {tab === "home" ? (
+          <Home
+            hosts={hosts}
+            activeHost={activeHost}
+            setActiveHost={setActiveHost}
+            agents={agents}
+            host={host}
+            error={error}
+            onOpenFleet={() => setTab("fleet")}
+          />
+        ) : tab === "settings" ? (
           <Settings
             hosts={hosts}
             activeHost={activeHost}
@@ -283,7 +310,7 @@ export default function App() {
         className="flex shrink-0 border-t border-border bg-card"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
-        {(["fleet", "settings"] as const).map((t) => (
+        {(["home", "fleet", "settings"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -293,9 +320,9 @@ export default function App() {
             )}
           >
             <span className="text-lg leading-none">
-              {t === "fleet" ? "🛰" : "⚙️"}
+              {t === "home" ? "🏠" : t === "fleet" ? "🛰" : "⚙️"}
             </span>
-            {t === "fleet" ? "Fleet" : "Settings"}
+            {t === "home" ? "Home" : t === "fleet" ? "Fleet" : "Settings"}
           </button>
         ))}
       </nav>
