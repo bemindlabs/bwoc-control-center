@@ -24,6 +24,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/fleet", get(fleet))
         .route("/agents/{id}", get(agent))
         .route("/agents/{id}/inbox", get(agent_inbox))
+        // chat = one-shot `bwoc run`; spawns the agent backend (costs tokens).
+        // Reachable by any enrolled controller (no per-route scope gate yet).
+        .route("/agents/{id}/chat", post(chat))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             verify_signed_request,
@@ -243,6 +246,39 @@ async fn agent_inbox(State(state): State<Arc<AppState>>, AxPath(id): AxPath<Stri
         return StatusCode::BAD_REQUEST.into_response();
     }
     match bwoc_json(&state.workspace, &["inbox", &id]).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => upstream_error(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ChatBody {
+    prompt: String,
+    #[serde(default)]
+    timeout: Option<u32>,
+}
+
+/// One-shot chat turn: `bwoc run <id> --task <prompt> --json`. Blocks while the
+/// agent thinks, then returns its `{output, duration_ms, …}`.
+async fn chat(
+    State(state): State<Arc<AppState>>,
+    AxPath(id): AxPath<String>,
+    Json(body): Json<ChatBody>,
+) -> Response {
+    if !valid_agent_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if body.prompt.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "empty prompt").into_response();
+    }
+    let timeout = body.timeout.unwrap_or(120).clamp(5, 600).to_string();
+    eprintln!("bwocd: CHAT {id} ({} chars)", body.prompt.len());
+    match bwoc_json(
+        &state.workspace,
+        &["run", &id, "--task", &body.prompt, "--timeout", &timeout],
+    )
+    .await
+    {
         Ok(v) => Json(v).into_response(),
         Err(e) => upstream_error(e),
     }

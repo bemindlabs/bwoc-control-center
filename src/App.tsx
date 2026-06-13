@@ -8,6 +8,7 @@ import type {
   HostListEntry,
 } from "./types";
 import { Card, cn, Dot, Stat } from "./ui";
+import Chat from "./Chat";
 
 const POLL_MS = 15_000;
 
@@ -31,9 +32,12 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
-function AgentRow({ a }: { a: AgentEntry }) {
+function AgentRow({ a, onOpen }: { a: AgentEntry; onOpen: (id: string) => void }) {
   return (
-    <tr className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40">
+    <tr
+      onClick={() => onOpen(a.id)}
+      className="cursor-pointer border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40 active:bg-muted/60"
+    >
       <td className="px-3 py-2.5 sm:px-4">
         <span className="flex items-center gap-2">
           <Dot className="shrink-0 bg-actor-agent/70" />
@@ -77,6 +81,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [copied, setCopied] = useState(false);
+  const [chatAgent, setChatAgent] = useState<string | null>(null);
 
   const refresh = useCallback(async (hostName: string) => {
     try {
@@ -117,6 +122,16 @@ export default function App() {
   const activeCount = agents.filter((a) => a.status === "active").length;
   const okCount = health.filter((h) => h.status === "ok").length;
   const loading = snap === null && !error;
+
+  if (chatAgent) {
+    return (
+      <Chat
+        host={activeHost}
+        agent={chatAgent}
+        onBack={() => setChatAgent(null)}
+      />
+    );
+  }
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
@@ -211,7 +226,7 @@ export default function App() {
               </thead>
               <tbody>
                 {agents.map((a) => (
-                  <AgentRow key={a.id} a={a} />
+                  <AgentRow key={a.id} a={a} onOpen={setChatAgent} />
                 ))}
                 {agents.length === 0 && (
                   <tr>

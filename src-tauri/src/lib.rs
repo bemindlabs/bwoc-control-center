@@ -125,6 +125,42 @@ async fn host_info(
     }
 }
 
+/// One chat turn with an agent: `bwoc run <agent> --task <prompt>`. Returns the
+/// agent's text output. Long-running (the agent backend thinks).
+#[tauri::command]
+async fn chat_send(
+    app: tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+    agent: String,
+    prompt: String,
+) -> Result<String, String> {
+    if !agent
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err("invalid agent id".into());
+    }
+    if prompt.trim().is_empty() {
+        return Err("empty message".into());
+    }
+    let out = match Transport::resolve(&cfg_dir(&app)?, host, workspace)? {
+        Transport::Local(t) => {
+            t.bwoc_json(&["run", &agent, "--task", &prompt, "--timeout", "120"])
+                .await?
+        }
+        Transport::Remote(r) => {
+            r.post_json(
+                &format!("/agents/{agent}/chat"),
+                serde_json::json!({ "prompt": prompt }),
+                130,
+            )
+            .await?
+        }
+    };
+    Ok(out["output"].as_str().unwrap_or("").trim().to_string())
+}
+
 /// Hosts the UI can switch between. Desktop lists "local" first (LocalShell
 /// against this machine's workspace); mobile omits it — there is no `bwoc` CLI
 /// or workspace in the app sandbox, so only remote hosts make sense.
@@ -174,7 +210,8 @@ pub fn run() {
             agent_inbox,
             host_info,
             list_hosts,
-            controller_info
+            controller_info,
+            chat_send
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
