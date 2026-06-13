@@ -1,6 +1,7 @@
 //! bwocd library surface — split from the binary so integration tests can
 //! drive the real router (middleware included) in-process.
 
+pub mod agentmem;
 pub mod auth;
 pub mod bwoc;
 pub mod enroll;

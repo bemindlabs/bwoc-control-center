@@ -65,6 +65,10 @@ impl LocalShell {
         self.workspace.to_str().unwrap_or("")
     }
 
+    pub fn workspace_path(&self) -> &Path {
+        &self.workspace
+    }
+
     /// Run `bwoc <args…> --workspace <ws> --json` and parse stdout as JSON.
     pub async fn bwoc_json(&self, args: &[&str]) -> Result<serde_json::Value, String> {
         let ws = self.workspace.clone();
@@ -267,4 +271,59 @@ impl RemoteHttp {
 
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Load an agent's saved memory (mirrors bwocd's agentmem): the `MEMORY.md`
+/// index if present, else the other `memories/*.md` files concatenated
+/// (README skipped). Capped so the chat prompt stays bounded.
+pub fn load_agent_memory(workspace: &Path, id: &str) -> Option<String> {
+    const MAX: usize = 8000;
+    let dir = workspace.join("agents").join(id).join("memories");
+    if !dir.is_dir() {
+        return None;
+    }
+    let cap = |s: &str| -> String {
+        if s.len() <= MAX {
+            s.to_string()
+        } else {
+            let mut end = MAX;
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}\n…(memory truncated)", &s[..end])
+        }
+    };
+
+    let index = dir.join("MEMORY.md");
+    if let Ok(c) = std::fs::read_to_string(&index) {
+        let c = c.trim();
+        if !c.is_empty() {
+            return Some(cap(c));
+        }
+    }
+    let mut paths: Vec<_> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "md"))
+        .filter(|p| {
+            !p.file_name()
+                .map(|n| n.eq_ignore_ascii_case("README.md"))
+                .unwrap_or(false)
+        })
+        .collect();
+    paths.sort();
+    let mut parts = Vec::new();
+    for p in paths {
+        if let Ok(c) = std::fs::read_to_string(&p) {
+            let c = c.trim();
+            if !c.is_empty() {
+                parts.push(format!(
+                    "### {}\n{c}",
+                    p.file_name().unwrap().to_string_lossy()
+                ));
+            }
+        }
+    }
+    (!parts.is_empty()).then(|| cap(&parts.join("\n\n")))
 }
