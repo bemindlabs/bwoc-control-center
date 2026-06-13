@@ -158,7 +158,20 @@ async fn chat_send(
             .await?
         }
     };
-    Ok(out["output"].as_str().unwrap_or("").trim().to_string())
+    Ok(clean_agent_output(out["output"].as_str().unwrap_or("")))
+}
+
+/// `bwoc run` output is the full harness stdout: startup banner, then
+/// `done in N turn(s).`, then the agent's final response. Keep only the
+/// response. Falls back to the trimmed raw text if the marker is absent.
+fn clean_agent_output(raw: &str) -> String {
+    if let Some(idx) = raw.rfind("turn(s).") {
+        let after = raw[idx + "turn(s).".len()..].trim();
+        if !after.is_empty() {
+            return after.to_string();
+        }
+    }
+    raw.trim().to_string()
 }
 
 /// Hosts the UI can switch between. Desktop lists "local" first (LocalShell
