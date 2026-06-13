@@ -9,6 +9,7 @@ import type {
 } from "./types";
 import { Card, cn, Dot, Stat } from "./ui";
 import Chat from "./Chat";
+import Settings from "./Settings";
 
 const POLL_MS = 15_000;
 
@@ -80,8 +81,8 @@ export default function App() {
   const [controller, setController] = useState<ControllerInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
-  const [copied, setCopied] = useState(false);
   const [chatAgent, setChatAgent] = useState<string | null>(null);
+  const [tab, setTab] = useState<"fleet" | "settings">("fleet");
 
   const refresh = useCallback(async (hostName: string) => {
     try {
@@ -134,10 +135,23 @@ export default function App() {
   }
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
-      <div className="mx-auto flex max-w-3xl flex-col gap-5 p-4 sm:p-6">
-        {/* ── header ─────────────────────────────────────── */}
-        <header className="flex items-start justify-between gap-3">
+    <main className="flex h-[100dvh] flex-col overflow-x-hidden bg-background text-foreground">
+      {/* scrollable content; padding-top clears the notch / status bar */}
+      <div
+        className="flex-1 overflow-y-auto"
+        style={{ paddingTop: "env(safe-area-inset-top)" }}
+      >
+        {tab === "settings" ? (
+          <Settings
+            hosts={hosts}
+            activeHost={activeHost}
+            setActiveHost={setActiveHost}
+            controller={controller}
+          />
+        ) : (
+          <div className="mx-auto flex max-w-3xl flex-col gap-5 p-4 sm:p-6">
+            {/* ── header ─────────────────────────────────────── */}
+            <header className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/15 text-lg ring-1 ring-primary/25">
               🎛️
@@ -260,26 +274,31 @@ export default function App() {
           </section>
         )}
 
-        {/* ── footer: controller identity (register on a host to connect) ── */}
-        {controller && (
-          <footer className="mt-auto pt-2 text-center text-[11px] text-muted-foreground">
-            <p>
-              controller <span className="font-mono">{controller.id}</span>
-            </p>
-            <button
-              className="mt-0.5 break-all font-mono leading-snug hover:text-foreground"
-              title="tap to copy public key"
-              onClick={() => {
-                navigator.clipboard?.writeText(controller.public_key);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1200);
-              }}
-            >
-              {copied ? "copied ✓" : controller.public_key}
-            </button>
-          </footer>
+          </div>
         )}
       </div>
+
+      {/* ── bottom nav (clears the home indicator) ─────────── */}
+      <nav
+        className="flex shrink-0 border-t border-border bg-card"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        {(["fleet", "settings"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={cn(
+              "flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition-colors",
+              tab === t ? "text-primary" : "text-muted-foreground",
+            )}
+          >
+            <span className="text-lg leading-none">
+              {t === "fleet" ? "🛰" : "⚙️"}
+            </span>
+            {t === "fleet" ? "Fleet" : "Settings"}
+          </button>
+        ))}
+      </nav>
     </main>
   );
 }
