@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import type { ControllerInfo, HostListEntry } from "./types";
 import { Card, cn, Dot } from "./ui";
@@ -8,18 +9,47 @@ export default function Settings({
   activeHost,
   setActiveHost,
   controller,
+  refreshHosts,
 }: {
   hosts: HostListEntry[];
   activeHost: string;
   setActiveHost: (h: string) => void;
   controller: ControllerInfo | null;
+  refreshHosts: () => Promise<void>;
 }) {
   const [version, setVersion] = useState("");
   const [copied, setCopied] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newUrl, setNewUrl] = useState("");
+  const [hostErr, setHostErr] = useState<string | null>(null);
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
   }, []);
+
+  async function addHost() {
+    setHostErr(null);
+    try {
+      await invoke("add_host", { name: newName.trim(), url: newUrl.trim() });
+      setNewName("");
+      setNewUrl("");
+      setAdding(false);
+      await refreshHosts();
+    } catch (e) {
+      setHostErr(String(e));
+    }
+  }
+
+  async function removeHost(name: string) {
+    setHostErr(null);
+    try {
+      await invoke("remove_host", { name });
+      await refreshHosts();
+    } catch (e) {
+      setHostErr(String(e));
+    }
+  }
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-5 p-4 sm:p-6">
@@ -32,28 +62,91 @@ export default function Settings({
         </p>
         <Card className="divide-y divide-border">
           {hosts.map((h) => (
-            <button
+            <div
               key={h.name}
-              onClick={() => setActiveHost(h.name)}
-              className="flex w-full items-center gap-3 px-4 py-3 text-left first:rounded-t-xl last:rounded-b-xl hover:bg-muted/40"
+              className="flex w-full items-center gap-3 px-4 py-3"
             >
-              <span className="text-base">
-                {h.name === "local" ? "💻" : "🛰"}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">{h.name}</span>
-                {h.url && (
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {h.url.replace(/^https?:\/\//, "")}
-                  </span>
+              <button
+                onClick={() => setActiveHost(h.name)}
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+              >
+                <span className="text-base">
+                  {h.name === "local" ? "💻" : "🛰"}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">{h.name}</span>
+                  {h.url && (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {h.url.replace(/^https?:\/\//, "")}
+                    </span>
+                  )}
+                </span>
+                {h.name === activeHost && (
+                  <Dot className="shrink-0 bg-help-resolved" />
                 )}
-              </span>
-              {h.name === activeHost && (
-                <Dot className="shrink-0 bg-help-resolved" />
+              </button>
+              {h.name !== "local" && (
+                <button
+                  onClick={() => removeHost(h.name)}
+                  className="shrink-0 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={`remove ${h.name}`}
+                >
+                  ✕
+                </button>
               )}
-            </button>
+            </div>
           ))}
         </Card>
+
+        {/* add host */}
+        {adding ? (
+          <Card className="mt-2.5 flex flex-col gap-2 p-3">
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="name (e.g. anna)"
+              autoCapitalize="none"
+              autoCorrect="off"
+              className="rounded-lg border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <input
+              value={newUrl}
+              onChange={(e) => setNewUrl(e.target.value)}
+              placeholder="https://host.tailnet.ts.net:10130"
+              autoCapitalize="none"
+              autoCorrect="off"
+              className="rounded-lg border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setAdding(false);
+                  setHostErr(null);
+                }}
+                className="flex-1 rounded-lg border border-border py-2 text-sm text-muted-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={addHost}
+                disabled={!newName.trim() || !newUrl.trim()}
+                className="flex-1 rounded-lg bg-primary py-2 text-sm font-medium text-primary-foreground disabled:opacity-40"
+              >
+                Add
+              </button>
+            </div>
+          </Card>
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            className="mt-2.5 w-full rounded-xl border border-dashed border-border py-2.5 text-sm text-muted-foreground hover:bg-muted/40"
+          >
+            + Add host
+          </button>
+        )}
+        {hostErr && (
+          <p className="mt-2 px-1 text-xs text-destructive">{hostErr}</p>
+        )}
       </section>
 
       {/* controller identity */}

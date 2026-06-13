@@ -24,7 +24,7 @@ pub struct HostEntry {
     pub url: String,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default)]
 struct HostsFile {
     #[serde(default)]
     host: Vec<HostEntry>,
@@ -114,4 +114,52 @@ pub fn load_hosts(dir: &Path) -> Result<Vec<HostEntry>, String> {
         return Ok(default_hosts());
     }
     Ok(parsed.host)
+}
+
+/// Persist the remote host list to hosts.toml (creating the dir if needed).
+pub fn save_hosts(dir: &Path, hosts: &[HostEntry]) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let body = toml::to_string_pretty(&HostsFile {
+        host: hosts.to_vec(),
+    })
+    .map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("hosts.toml"), body).map_err(|e| e.to_string())
+}
+
+/// Add or replace a host by name. Validates the name (kebab-case) and URL.
+pub fn add_host(dir: &Path, name: &str, url: &str) -> Result<(), String> {
+    let name = name.trim();
+    let url = url.trim().trim_end_matches('/');
+    if name.is_empty()
+        || name == "local"
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err("name must be lowercase letters/digits/'-' and not 'local'".into());
+    }
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("url must start with https:// (or http://)".into());
+    }
+    let mut hosts = load_hosts(dir)?;
+    if let Some(h) = hosts.iter_mut().find(|h| h.name == name) {
+        h.url = url.to_string();
+    } else {
+        hosts.push(HostEntry {
+            name: name.to_string(),
+            url: url.to_string(),
+        });
+    }
+    save_hosts(dir, &hosts)
+}
+
+/// Remove a host by name. (The synthetic "local" entry is never stored here.)
+pub fn remove_host(dir: &Path, name: &str) -> Result<(), String> {
+    let mut hosts = load_hosts(dir)?;
+    let before = hosts.len();
+    hosts.retain(|h| h.name != name);
+    if hosts.len() == before {
+        return Err(format!("no host named '{name}'"));
+    }
+    save_hosts(dir, &hosts)
 }

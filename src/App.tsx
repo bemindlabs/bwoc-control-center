@@ -103,6 +103,16 @@ export default function App() {
       .catch(() => setHost(null));
   }, []);
 
+  const refreshHosts = useCallback(async () => {
+    const h = await invoke<HostListEntry[]>("list_hosts").catch(
+      () => [] as HostListEntry[],
+    );
+    setHosts(h);
+    setActiveHost((cur) =>
+      cur && h.some((x) => x.name === cur) ? cur : h[0]?.name || "",
+    );
+  }, []);
+
   useEffect(() => {
     invoke<HostListEntry[]>("list_hosts")
       .then((h) => {
@@ -174,6 +184,7 @@ export default function App() {
             activeHost={activeHost}
             setActiveHost={setActiveHost}
             controller={controller}
+            refreshHosts={refreshHosts}
           />
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-5 p-4 sm:p-6">
