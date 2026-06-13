@@ -51,9 +51,12 @@ export default function Chat({
   }
 
   return (
-    <main className="flex h-screen flex-col bg-background text-foreground">
-      {/* header */}
-      <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
+    <main className="flex h-[100dvh] flex-col bg-background text-foreground">
+      {/* header — padding-top clears the notch / status bar */}
+      <header
+        className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3"
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.5rem)" }}
+      >
         <button
           onClick={onBack}
           className="rounded-lg px-2 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -103,8 +106,11 @@ export default function Chat({
         <div ref={endRef} />
       </div>
 
-      {/* input */}
-      <div className="flex shrink-0 items-end gap-2 border-t border-border p-3">
+      {/* input — padding-bottom clears the home indicator */}
+      <div
+        className="flex shrink-0 items-end gap-2 border-t border-border p-3"
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
+      >
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
