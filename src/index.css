@@ -115,8 +115,16 @@
 @layer base {
   * {
     @apply border-border;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
+    /* kill the double-tap-to-zoom delay/gesture in the webview */
+    touch-action: manipulation;
+    overscroll-behavior: none;
   }
 }

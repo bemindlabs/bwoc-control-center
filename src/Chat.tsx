@@ -51,7 +51,7 @@ export default function Chat({
   }
 
   return (
-    <main className="flex h-[100dvh] flex-col bg-background text-foreground">
+    <main className="flex h-[100dvh] flex-col overflow-x-hidden bg-background text-foreground">
       {/* header — padding-top clears the notch / status bar */}
       <header
         className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3"
@@ -83,7 +83,7 @@ export default function Chat({
           <div
             key={i}
             className={cn(
-              "max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm",
+              "max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm",
               m.role === "user"
                 ? "ml-auto bg-primary text-primary-foreground"
                 : "mr-auto border border-border bg-card",
@@ -99,7 +99,7 @@ export default function Chat({
           </div>
         )}
         {error && (
-          <div className="mr-auto rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className="mr-auto max-w-[85%] break-words rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {error}
           </div>
         )}
