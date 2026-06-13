@@ -202,6 +202,18 @@ fn list_hosts(app: tauri::AppHandle) -> Result<Vec<HostListEntry>, String> {
     Ok(out)
 }
 
+/// Add or update a remote host (writes hosts.toml).
+#[tauri::command]
+fn add_host(app: tauri::AppHandle, name: String, url: String) -> Result<(), String> {
+    config::add_host(&cfg_dir(&app)?, &name, &url)
+}
+
+/// Remove a remote host by name.
+#[tauri::command]
+fn remove_host(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    config::remove_host(&cfg_dir(&app)?, &name)
+}
+
 /// This install's controller identity — shown in the UI so the public key can
 /// be registered in a bwocd's controllers.toml (QR enrollment supersedes this).
 #[tauri::command]
@@ -232,7 +244,9 @@ pub fn run() {
             host_info,
             list_hosts,
             controller_info,
-            chat_send
+            chat_send,
+            add_host,
+            remove_host
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
