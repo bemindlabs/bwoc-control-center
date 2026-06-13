@@ -7,7 +7,7 @@ After=network.target
 
 [Service]
 ExecStart=%h/.local/bin/bwocd --workspace %h/workspaces/bwoc --bind 127.0.0.1:10130
-Environment=PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 Restart=on-failure
 RestartSec=3
 
