@@ -71,7 +71,7 @@ export default function Devices() {
     try {
       const s = await invoke<BallStatus>("device_status", { id });
       setSt(s);
-    } catch (e) {
+    } catch {
       setSt((p) => ({ ...p, online: false }));
     }
   }, [id]);
