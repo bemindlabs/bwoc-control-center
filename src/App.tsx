@@ -11,7 +11,9 @@ import { Card, cn, Dot, Stat } from "./ui";
 import Chat from "./Chat";
 import Settings from "./Settings";
 import Home from "./Home";
+import Devices from "./Devices";
 import Onboarding from "./Onboarding";
+import Splash from "./Splash";
 
 const POLL_MS = 15_000;
 
@@ -84,10 +86,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [chatAgent, setChatAgent] = useState<string | null>(null);
-  const [tab, setTab] = useState<"home" | "fleet" | "settings">("home");
+  const [tab, setTab] = useState<"home" | "fleet" | "devices" | "settings">("home");
   const [onboarded, setOnboarded] = useState(
     () => localStorage.getItem("bwoc.onboarded") === "1",
   );
+  const [splashing, setSplashing] = useState(true);
 
   const refresh = useCallback(async (hostName: string) => {
     try {
@@ -139,6 +142,10 @@ export default function App() {
   const okCount = health.filter((h) => h.status === "ok").length;
   const loading = snap === null && !error;
 
+  if (splashing) {
+    return <Splash durationMs={3000} onDone={() => setSplashing(false)} />;
+  }
+
   if (!onboarded) {
     return (
       <Onboarding
@@ -186,6 +193,8 @@ export default function App() {
             controller={controller}
             refreshHosts={refreshHosts}
           />
+        ) : tab === "devices" ? (
+          <Devices />
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-5 p-4 sm:p-6">
             {/* ── header ─────────────────────────────────────── */}
@@ -321,7 +330,7 @@ export default function App() {
         className="flex shrink-0 border-t border-border bg-card"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
-        {(["home", "fleet", "settings"] as const).map((t) => (
+        {(["home", "fleet", "devices", "settings"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -331,9 +340,9 @@ export default function App() {
             )}
           >
             <span className="text-lg leading-none">
-              {t === "home" ? "🏠" : t === "fleet" ? "🛰" : "⚙️"}
+              {t === "home" ? "🏠" : t === "fleet" ? "🛰" : t === "devices" ? "🤖" : "⚙️"}
             </span>
-            {t === "home" ? "Home" : t === "fleet" ? "Fleet" : "Settings"}
+            {t === "home" ? "Home" : t === "fleet" ? "Fleet" : t === "devices" ? "Devices" : "Settings"}
           </button>
         ))}
       </nav>
