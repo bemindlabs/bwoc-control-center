@@ -22,7 +22,12 @@ pub fn router(state: Arc<AppState>) -> Router {
     let signed = Router::new()
         .route("/hosts", get(hosts))
         .route("/fleet", get(fleet))
-        .route("/agents/{id}", get(agent))
+        // CRUD: create (POST), read one (GET), retire (DELETE). All mutating
+        // ops shell the same `bwoc` CLI the read paths use; any enrolled
+        // controller may call them (no per-route scope gate yet).
+        .route("/agents", post(agent_create))
+        .route("/agents/{id}", get(agent).delete(agent_retire))
+        .route("/agents/{id}/status", get(agent_status))
         .route("/agents/{id}/inbox", get(agent_inbox))
         // chat = one-shot `bwoc run`; spawns the agent backend (costs tokens).
         // Reachable by any enrolled controller (no per-route scope gate yet).
@@ -241,6 +246,107 @@ async fn agent(State(state): State<Arc<AppState>>, AxPath(id): AxPath<String>) -
     }
 }
 
+#[derive(serde::Deserialize)]
+struct CreateBody {
+    /// Bare agent name (no `agent-` prefix) — becomes `agent-<name>`.
+    name: String,
+    backend: String,
+    role: String,
+    primary_model: String,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+/// Create an agent: `bwoc new <name> --json --backend … --role … --primary-model
+/// … --target agents/agent-<name>`. The template auto-resolves (CLI ships an
+/// embedded fallback). Mutating + slow-ish (incarnation writes files).
+async fn agent_create(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<CreateBody>,
+) -> Response {
+    let name = body.name.trim();
+    if !valid_agent_name(name) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "name must be lowercase letters/digits/'-'",
+        )
+            .into_response();
+    }
+    if !valid_backend(&body.backend) {
+        return (StatusCode::BAD_REQUEST, "invalid backend").into_response();
+    }
+    if body.role.trim().is_empty() || body.primary_model.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "role and primary_model are required",
+        )
+            .into_response();
+    }
+    let target = format!("agents/agent-{name}");
+    // `bwoc new` requires the four verification gates at incarnation (it cannot
+    // prompt over HTTP). Default them to the no-op `true`; the operator refines
+    // them later (edit the agent, or recreate it bound to a project).
+    let mut args: Vec<&str> = vec![
+        "new",
+        name,
+        "--json",
+        "--backend",
+        &body.backend,
+        "--role",
+        body.role.trim(),
+        "--primary-model",
+        body.primary_model.trim(),
+        "--lint-cmd",
+        "true",
+        "--format-cmd",
+        "true",
+        "--test-cmd",
+        "true",
+        "--build-cmd",
+        "true",
+        "--target",
+        &target,
+    ];
+    let scope = body
+        .scope
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(s) = scope {
+        args.push("--scope");
+        args.push(s);
+    }
+    eprintln!("bwocd: CREATE agent-{name} backend={}", body.backend);
+    match bwoc_json(&state.workspace, &args).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => upstream_error(e),
+    }
+}
+
+/// Retire an agent: `bwoc retire <id> --yes --json` (removes registry entry +
+/// files). Destructive — `--yes` bypasses the CLI's confirm prompt.
+async fn agent_retire(State(state): State<Arc<AppState>>, AxPath(id): AxPath<String>) -> Response {
+    if !valid_agent_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    eprintln!("bwocd: RETIRE {id}");
+    match bwoc_json(&state.workspace, &["retire", &id, "--yes", "--json"]).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => upstream_error(e),
+    }
+}
+
+/// One agent's health + identity: `bwoc status <id> --json`.
+async fn agent_status(State(state): State<Arc<AppState>>, AxPath(id): AxPath<String>) -> Response {
+    if !valid_agent_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match bwoc_json(&state.workspace, &["status", &id, "--json"]).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => upstream_error(e),
+    }
+}
+
 async fn agent_inbox(State(state): State<Arc<AppState>>, AxPath(id): AxPath<String>) -> Response {
     if !valid_agent_id(&id) {
         return StatusCode::BAD_REQUEST.into_response();
@@ -309,6 +415,26 @@ fn valid_agent_id(id: &str) -> bool {
         && id
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Bare agent name for `bwoc new` — same charset as an id, must not start with
+/// `-` (would parse as a flag) and capped shorter (the `agent-` prefix is added).
+fn valid_agent_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 48
+        && !name.starts_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Known backend identifiers (a closed set — never interpolate an arbitrary
+/// string into the CLI invocation).
+fn valid_backend(b: &str) -> bool {
+    matches!(
+        b,
+        "claude" | "codex" | "agy" | "kimi" | "ollama" | "openai" | "copilot" | "openrouter"
+    )
 }
 
 fn upstream_error(e: String) -> Response {

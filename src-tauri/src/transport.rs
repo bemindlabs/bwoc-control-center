@@ -228,6 +228,36 @@ impl RemoteHttp {
         }
     }
 
+    /// Signed DELETE against bwocd (e.g. retire an agent). No body.
+    pub async fn delete_json(&self, path: &str) -> Result<serde_json::Value, String> {
+        let canonical = cc_signing::canonical_path(path, None);
+        let headers = cc_signing::build_signed_headers(
+            &self.controller.id,
+            &self.controller.seed_hex,
+            "DELETE",
+            &canonical,
+            b"",
+        )?;
+        let client = reqwest::Client::new();
+        let mut req = client.delete(format!("{}{}", self.base, path));
+        for (k, v) in headers {
+            req = req.header(k, v);
+        }
+        let res = req
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .await
+            .map_err(|e| format!("bwocd unreachable: {e}"))?;
+        if !res.status().is_success() {
+            return Err(format!(
+                "bwocd {}: {}",
+                res.status(),
+                res.text().await.unwrap_or_default()
+            ));
+        }
+        res.json().await.map_err(|e| format!("bad bwocd JSON: {e}"))
+    }
+
     /// Signed POST with a JSON body; `timeout_secs` is generous for actions
     /// like chat where the agent thinks for a while.
     pub async fn post_json(
