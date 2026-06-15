@@ -384,6 +384,7 @@ pub fn run() {
             remove_host,
             device::usb_list_ports,
             device::usb_connect,
+            device::usb_autoconnect,
             device::usb_disconnect,
             device::usb_wifi_scan,
             device::usb_set_wifi,

@@ -95,6 +95,7 @@ export default function Devices() {
   const [st, setSt] = useState<BallStatus>({ online: false });
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string>("");
+  const [conn, setConn] = useState<string>("");
 
   const refresh = useCallback(async () => {
     try {
@@ -105,11 +106,27 @@ export default function Devices() {
     }
   }, [id]);
 
+  // On selecting a device, open + keep its USB console so status reads online.
+  // Opening resets the ESP32-S3 once (USB-CDC auto-reset). The bwoc-ball has no
+  // such console and resolves to an explanatory message instead of connecting.
   useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
-  }, [refresh]);
+    let alive = true;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    setConn("connecting…");
+    setSt({ online: false });
+    (async () => {
+      try {
+        const port = await invoke<string>("usb_autoconnect", { id });
+        if (alive) setConn(`USB ${port}`);
+      } catch (e) {
+        if (alive) setConn(String(e));
+      }
+      if (!alive) return;
+      refresh();
+      timer = setInterval(refresh, 5000);
+    })();
+    return () => { alive = false; if (timer) clearInterval(timer); };
+  }, [id, refresh]);
 
   const control = useCallback(async (component: string, value: unknown) => {
     setBusy(component);
@@ -152,6 +169,7 @@ export default function Devices() {
             <div className="text-xs text-muted-foreground">
               {dev.desc} {st.online ? "· online" : "· offline"}
             </div>
+            {conn && <div className="mt-0.5 text-[11px] text-muted-foreground/80">{conn}</div>}
           </div>
           <button onClick={refresh} className="rounded-md border border-border px-2 py-1 text-xs">
             refresh
