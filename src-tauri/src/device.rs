@@ -258,7 +258,9 @@ mod imp {
                 return Err("no USB serial device found".into());
             }
             for name in cands {
-                let Ok(mut p) = open_console(&name) else { continue };
+                let Ok(mut p) = open_console(&name) else {
+                    continue;
+                };
                 // PING → the sc01plus answers `<<PONG`; xiaozhi emits no `<<` lines.
                 let reply = usb_command(&mut p, "PING", &["<<"], Duration::from_millis(800))
                     .unwrap_or_default();
