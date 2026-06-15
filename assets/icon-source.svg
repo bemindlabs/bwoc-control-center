@@ -4,89 +4,72 @@
       <stop offset="0" stop-color="#1B2230"/>
       <stop offset="1" stop-color="#12161F"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(512 505) rotate(90) scale(250 250)">
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(512 512) scale(270)">
       <stop offset="0" stop-color="#4FD0DC" stop-opacity=".28"/>
-      <stop offset=".45" stop-color="#36B4C1" stop-opacity=".12"/>
+      <stop offset=".42" stop-color="#36B4C1" stop-opacity=".12"/>
       <stop offset="1" stop-color="#36B4C1" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="hubFill" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(512 506) rotate(90) scale(92 92)">
+    <radialGradient id="hubFill" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(512 512) scale(102)">
       <stop offset="0" stop-color="#4FD0DC"/>
       <stop offset=".62" stop-color="#36B4C1"/>
       <stop offset="1" stop-color="#2A8C97"/>
     </radialGradient>
-    <linearGradient id="link" x1="348" y1="336" x2="676" y2="688" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#4FD0DC" stop-opacity=".16"/>
-      <stop offset=".5" stop-color="#36B4C1" stop-opacity=".62"/>
-      <stop offset="1" stop-color="#4FD0DC" stop-opacity=".2"/>
+    <linearGradient id="link" x1="352" y1="352" x2="672" y2="672" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4FD0DC" stop-opacity=".14"/>
+      <stop offset=".5" stop-color="#36B4C1" stop-opacity=".74"/>
+      <stop offset="1" stop-color="#4FD0DC" stop-opacity=".18"/>
     </linearGradient>
     <linearGradient id="satellite" x1="0" y1="0" x2="0" y2="1" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#4FD0DC"/>
       <stop offset="1" stop-color="#2A8C97"/>
     </linearGradient>
-    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="8"/>
-    </filter>
   </defs>
 
   <rect width="1024" height="1024" fill="url(#bg)"/>
   <rect width="1024" height="1024" fill="url(#glow)"/>
 
-  <g opacity=".36" stroke="url(#link)" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M512 506L708 408"/>
-    <path d="M512 506L719 572"/>
-    <path d="M512 506L622 716"/>
-    <path d="M512 506L401 718"/>
-    <path d="M512 506L305 575"/>
-    <path d="M512 506L318 410"/>
-    <path d="M708 408L719 572"/>
-    <path d="M719 572L622 716"/>
-    <path d="M401 718L305 575"/>
-    <path d="M318 410L401 718"/>
+  <circle cx="512" cy="512" r="304" fill="none" stroke="#FFFFFF" stroke-opacity=".05" stroke-width="4"/>
+  <circle cx="512" cy="512" r="178" fill="none" stroke="#FFFFFF" stroke-opacity=".045" stroke-width="2"/>
+
+  <g stroke="url(#link)" stroke-linecap="round" stroke-width="20">
+    <g>
+      <line x1="512" y1="640" x2="512" y2="812"/>
+      <circle cx="512" cy="812" r="26" fill="url(#satellite)" stroke="#4FD0DC" stroke-opacity=".24" stroke-width="2"/>
+    </g>
+    <g transform="rotate(45 512 512)">
+      <line x1="512" y1="640" x2="512" y2="812"/>
+      <circle cx="512" cy="812" r="26" fill="url(#satellite)" stroke="#4FD0DC" stroke-opacity=".24" stroke-width="2"/>
+    </g>
+    <g transform="rotate(90 512 512)">
+      <line x1="512" y1="640" x2="512" y2="812"/>
+      <circle cx="512" cy="812" r="26" fill="url(#satellite)" stroke="#4FD0DC" stroke-opacity=".24" stroke-width="2"/>
+    </g>
+    <g transform="rotate(135 512 512)">
+      <line x1="512" y1="640" x2="512" y2="812"/>
+      <circle cx="512" cy="812" r="26" fill="url(#satellite)" stroke="#4FD0DC" stroke-opacity=".24" stroke-width="2"/>
+    </g>
+    <g transform="rotate(180 512 512)">
+      <line x1="512" y1="640" x2="512" y2="812"/>
+      <circle cx="512" cy="812" r="26" fill="url(#satellite)" stroke="#4FD0DC" stroke-opacity=".24" stroke-width="2"/>
+    </g>
+    <g transform="rotate(225 512 512)">
+      <line x1="512" y1="640" x2="512" y2="812"/>
+      <circle cx="512" cy="812" r="26" fill="url(#satellite)" stroke="#4FD0DC" stroke-opacity=".24" stroke-width="2"/>
+    </g>
+    <g transform="rotate(270 512 512)">
+      <line x1="512" y1="640" x2="512" y2="812"/>
+      <circle cx="512" cy="812" r="26" fill="url(#satellite)" stroke="#4FD0DC" stroke-opacity=".24" stroke-width="2"/>
+    </g>
+    <g transform="rotate(315 512 512)">
+      <line x1="512" y1="640" x2="512" y2="812"/>
+      <circle cx="512" cy="812" r="26" fill="url(#satellite)" stroke="#4FD0DC" stroke-opacity=".24" stroke-width="2"/>
+    </g>
   </g>
 
-  <g opacity=".18" fill="#FFFFFF" stroke="#FFFFFF" stroke-opacity=".14">
-    <circle cx="512" cy="506" r="206" stroke-width="2" fill="none"/>
-    <circle cx="708" cy="408" r="8"/>
-    <circle cx="719" cy="572" r="8"/>
-    <circle cx="622" cy="716" r="8"/>
-    <circle cx="401" cy="718" r="8"/>
-    <circle cx="305" cy="575" r="8"/>
-    <circle cx="318" cy="410" r="8"/>
-  </g>
-
-  <g filter="url(#soft)" opacity=".8">
-    <circle cx="512" cy="506" r="112" fill="#36B4C1" fill-opacity=".16"/>
-  </g>
-
-  <g>
-    <circle cx="512" cy="506" r="92" fill="url(#hubFill)"/>
-    <circle cx="512" cy="506" r="92" fill="none" stroke="#4FD0DC" stroke-opacity=".42" stroke-width="2"/>
-    <circle cx="512" cy="506" r="60" fill="#12161F" fill-opacity=".18"/>
-    <circle cx="512" cy="506" r="34" fill="#4FD0DC" fill-opacity=".18" stroke="#4FD0DC" stroke-opacity=".6" stroke-width="2"/>
-    <circle cx="512" cy="506" r="12" fill="#4FD0DC"/>
-  </g>
-
-  <g>
-    <circle cx="708" cy="408" r="28" fill="url(#satellite)"/>
-    <circle cx="708" cy="408" r="28" fill="none" stroke="#4FD0DC" stroke-opacity=".28" stroke-width="2"/>
-    <circle cx="719" cy="572" r="23" fill="url(#satellite)"/>
-    <circle cx="719" cy="572" r="23" fill="none" stroke="#4FD0DC" stroke-opacity=".24" stroke-width="2"/>
-    <circle cx="622" cy="716" r="25" fill="url(#satellite)"/>
-    <circle cx="622" cy="716" r="25" fill="none" stroke="#4FD0DC" stroke-opacity=".24" stroke-width="2"/>
-    <circle cx="401" cy="718" r="22" fill="url(#satellite)"/>
-    <circle cx="401" cy="718" r="22" fill="none" stroke="#4FD0DC" stroke-opacity=".22" stroke-width="2"/>
-    <circle cx="305" cy="575" r="24" fill="url(#satellite)"/>
-    <circle cx="305" cy="575" r="24" fill="none" stroke="#4FD0DC" stroke-opacity=".24" stroke-width="2"/>
-    <circle cx="318" cy="410" r="21" fill="url(#satellite)"/>
-    <circle cx="318" cy="410" r="21" fill="none" stroke="#4FD0DC" stroke-opacity=".2" stroke-width="2"/>
-  </g>
-
-  <g opacity=".24" stroke="#FFFFFF" stroke-opacity=".14" stroke-linecap="round">
-    <path d="M365 343C430 303 597 299 662 339"/>
-    <path d="M259 504C272 424 325 360 404 325"/>
-    <path d="M261 600C291 701 376 778 478 796"/>
-    <path d="M522 804C628 800 713 741 759 646"/>
-  </g>
-
-  <circle cx="512" cy="506" r="292" fill="none" stroke="#FFFFFF" stroke-opacity=".05" stroke-width="2"/>
+  <circle cx="512" cy="512" r="134" fill="#36B4C1" fill-opacity=".08"/>
+  <circle cx="512" cy="512" r="102" fill="url(#hubFill)"/>
+  <circle cx="512" cy="512" r="102" fill="none" stroke="#4FD0DC" stroke-opacity=".4" stroke-width="2"/>
+  <circle cx="512" cy="512" r="58" fill="#12161F" fill-opacity=".2"/>
+  <circle cx="512" cy="512" r="34" fill="#4FD0DC" fill-opacity=".18" stroke="#4FD0DC" stroke-opacity=".58" stroke-width="2"/>
+  <circle cx="512" cy="512" r="12" fill="#4FD0DC"/>
 </svg>

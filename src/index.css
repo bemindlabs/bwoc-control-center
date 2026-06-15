@@ -112,6 +112,18 @@
   --presence: oklch(0.76 0.17 150);
 }
 
+/* soft fade + rise — used for onboarding step transitions */
+@keyframes fadeRise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @layer base {
   * {
     @apply border-border;
