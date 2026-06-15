@@ -197,7 +197,7 @@ export default function App() {
         ) : tab === "devices" ? (
           <Devices />
         ) : (
-          <div className="mx-auto flex max-w-3xl flex-col gap-5 p-4 sm:p-6">
+          <div className="flex w-full flex-col gap-5 p-4 sm:p-6 lg:px-8">
             {/* ── header ─────────────────────────────────────── */}
             <header className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
@@ -314,7 +314,7 @@ export default function App() {
 
         {/* ── health signals ─────────────────────────────── */}
         {health.length > 0 && (
-          <section className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          <section className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {health.map((h) => (
               <Card key={h.condition} className="px-3.5 py-3">
                 <p className="flex items-center gap-2 text-sm font-medium">

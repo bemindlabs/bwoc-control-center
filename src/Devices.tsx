@@ -126,7 +126,7 @@ export default function Devices() {
   }, [id, refresh]);
 
   return (
-    <div className="mx-auto max-w-2xl space-y-4 px-4 py-4">
+    <div className="mx-auto w-full max-w-4xl space-y-4 px-4 py-4 sm:px-6 lg:px-8">
       {/* ── device picker ───────────────────────────────── */}
       <div className="flex gap-1.5 rounded-xl border border-border bg-card p-1">
         {DEVICES.map((d) => (

@@ -75,7 +75,7 @@ export default function Home({
   const reachable = !error && host !== null;
 
   return (
-    <div className="relative mx-auto flex max-w-3xl flex-col gap-6 px-4 pb-6 sm:px-6">
+    <div className="relative mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-6 sm:px-6 lg:px-8">
       {/* ── hero ──────────────────────────────────────────── */}
       <header className="relative flex flex-col items-center gap-4 pt-12 text-center">
         {/* teal glow */}
@@ -132,6 +132,7 @@ export default function Home({
         <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           Hosts
         </p>
+        <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         {hosts.map((h) => {
           const active = h.name === activeHost;
           return (
@@ -177,6 +178,7 @@ export default function Home({
             </button>
           );
         })}
+        </div>
       </section>
 
       {/* ── primary action ────────────────────────────────── */}

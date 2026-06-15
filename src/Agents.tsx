@@ -112,7 +112,7 @@ export default function Agents({
 
       {/* create form */}
       {open && (
-        <Card className="flex flex-col gap-2 p-3">
+        <Card className="flex w-full max-w-2xl flex-col gap-2 p-3">
           <div className="flex gap-2">
             <input
               value={name}
