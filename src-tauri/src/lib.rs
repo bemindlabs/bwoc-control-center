@@ -151,10 +151,11 @@ async fn agent_create(
             let target = format!("agents/agent-{name}");
             // `bwoc new` requires the four verification gates at incarnation
             // (it can't prompt here). Default to the no-op `true`; refine later.
+            // NB: bwoc_json already appends `--json` (+ `--workspace`); never
+            // pass `--json` here or bwoc errors "used multiple times".
             let mut args = vec![
                 "new",
                 name,
-                "--json",
                 "--backend",
                 &backend,
                 "--role",
@@ -209,7 +210,7 @@ async fn agent_retire(
         return Err("invalid agent id".into());
     }
     match Transport::resolve(&cfg_dir(&app)?, host, workspace)? {
-        Transport::Local(t) => t.bwoc_json(&["retire", &agent, "--yes", "--json"]).await,
+        Transport::Local(t) => t.bwoc_json(&["retire", &agent, "--yes"]).await,
         Transport::Remote(r) => r.delete_json(&format!("/agents/{agent}")).await,
     }
 }
@@ -226,7 +227,7 @@ async fn agent_status(
         return Err("invalid agent id".into());
     }
     match Transport::resolve(&cfg_dir(&app)?, host, workspace)? {
-        Transport::Local(t) => t.bwoc_json(&["status", &agent, "--json"]).await,
+        Transport::Local(t) => t.bwoc_json(&["status", &agent]).await,
         Transport::Remote(r) => r.get_json(&format!("/agents/{agent}/status")).await,
     }
 }

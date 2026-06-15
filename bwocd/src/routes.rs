@@ -286,10 +286,11 @@ async fn agent_create(
     // `bwoc new` requires the four verification gates at incarnation (it cannot
     // prompt over HTTP). Default them to the no-op `true`; the operator refines
     // them later (edit the agent, or recreate it bound to a project).
+    // NB: bwoc_json already appends `--json` (+ `--workspace`); passing `--json`
+    // here makes bwoc error "the argument '--json' cannot be used multiple times".
     let mut args: Vec<&str> = vec![
         "new",
         name,
-        "--json",
         "--backend",
         &body.backend,
         "--role",
@@ -330,7 +331,7 @@ async fn agent_retire(State(state): State<Arc<AppState>>, AxPath(id): AxPath<Str
         return StatusCode::BAD_REQUEST.into_response();
     }
     eprintln!("bwocd: RETIRE {id}");
-    match bwoc_json(&state.workspace, &["retire", &id, "--yes", "--json"]).await {
+    match bwoc_json(&state.workspace, &["retire", &id, "--yes"]).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => upstream_error(e),
     }
@@ -341,7 +342,7 @@ async fn agent_status(State(state): State<Arc<AppState>>, AxPath(id): AxPath<Str
     if !valid_agent_id(&id) {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    match bwoc_json(&state.workspace, &["status", &id, "--json"]).await {
+    match bwoc_json(&state.workspace, &["status", &id]).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => upstream_error(e),
     }
