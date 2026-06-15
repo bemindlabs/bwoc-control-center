@@ -53,6 +53,12 @@ mod imp {
         serial: Mutex<Option<Box<dyn serialport::SerialPort>>>,
     }
 
+    impl DeviceState {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
     /// Write `line` + '\n', looping until every byte is out.
     fn write_line(port: &mut Box<dyn serialport::SerialPort>, line: &str) -> Result<(), String> {
         let mut buf = line.as_bytes().to_vec();
@@ -369,6 +375,12 @@ mod imp {
 
     #[derive(Default)]
     pub struct DeviceState;
+
+    impl DeviceState {
+        pub fn new() -> Self {
+            DeviceState
+        }
+    }
 
     const NO_USB: &str = "USB serial is desktop-only — connect the device to a Mac to provision it";
 

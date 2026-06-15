@@ -240,7 +240,7 @@ fn local_hostname() -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(Arc::new(device::DeviceState::default()))
+        .manage(Arc::new(device::DeviceState::new()))
         .invoke_handler(tauri::generate_handler![
             fleet_snapshot,
             agent_inbox,
