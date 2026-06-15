@@ -14,6 +14,10 @@
 
 use serde::Serialize;
 
+/// Devices the tab knows about. Both speak the same 115200 USB console; control
+/// verbs differ (sc01plus: FACE/SAY/FLEET; bwoc-ball: provisioning + network).
+pub const KNOWN_DEVICES: [&str; 2] = ["bwoc-ball", "sc01plus"];
+
 /// Status the Devices tab renders. Fields beyond online/ip/net come from the
 /// network WS/MCP channel (not wired yet) and stay `None` over USB.
 #[derive(Serialize, Default)]
@@ -309,15 +313,71 @@ mod imp {
         .map_err(|e| format!("join: {e}"))?
     }
 
-    /// Read status. Over USB this reports online + ip from `WIFI STATUS`; richer
-    /// fields need the network WS/MCP channel and stay absent. Offline when no
-    /// port is open.
+    /// Map a UI emotion/face name onto one of the firmware's six FACE
+    /// expressions (idle|think|talk|busy|happy|error).
+    fn face_expr(v: &str) -> &'static str {
+        match v {
+            "thinking" | "debugging" | "investigating" | "analyzing" | "brainstorm" | "coding"
+            | "writing" | "reporting" | "think" => "think",
+            "speaking" | "listening" | "talk" => "talk",
+            "happy" | "love" | "celebrate" | "cool" | "wink" => "happy",
+            "error" | "sad" | "angry" => "error",
+            "busy" | "working" => "busy",
+            _ => "idle",
+        }
+    }
+
+    /// Parse the rich `INFO` JSON (sc01plus) into a status. Falls back to
+    /// `WIFI STATUS` for firmwares without `INFO` (e.g. the bare ball console).
+    fn read_status(port: &mut Box<dyn serialport::SerialPort>) -> BallStatus {
+        let mut st = BallStatus::default();
+        let info = usb_command(port, "INFO", &["<<INFO", "<<ERR"], Duration::from_secs(2))
+            .unwrap_or_default();
+        if let Some(json) = info
+            .iter()
+            .find_map(|l| l.strip_prefix("<<INFO ").map(str::trim))
+        {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+                let wifi = &v["wifi"];
+                let status = wifi["status"].as_str().unwrap_or("");
+                st.online = status.starts_with("connected");
+                st.ip = wifi["sta_ip"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+                st.net = wifi["ssid"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+                return st;
+            }
+        }
+        // fallback: WIFI STATUS → connected:<ip>
+        let lines = usb_command(port, "WIFI STATUS", &["<<WIFI"], Duration::from_secs(2))
+            .unwrap_or_default();
+        let payload = lines
+            .iter()
+            .rev()
+            .find_map(|l| l.strip_prefix("<<WIFI ").map(|s| s.trim().to_string()))
+            .unwrap_or_default();
+        if let Some(rest) = payload.strip_prefix("connected:") {
+            st.online = true;
+            // payload can be "192.168.1.150:inet" — keep just the ip
+            st.ip = Some(rest.split(':').next().unwrap_or(rest).trim().to_string());
+        } else if let Some(ssid) = payload.strip_prefix("connecting:") {
+            st.net = Some(ssid.trim().to_string());
+        }
+        st
+    }
+
+    /// Read device status over the open USB console (`INFO`, else `WIFI STATUS`).
+    /// Offline when no port is open. Same console on bwoc-ball + sc01plus.
     #[tauri::command]
     pub async fn device_status(
         id: String,
         state: tauri::State<'_, Arc<DeviceState>>,
     ) -> Result<BallStatus, String> {
-        if id != "bwoc-ball" {
+        if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
         }
         let app = Arc::clone(state.inner());
@@ -326,40 +386,60 @@ mod imp {
             let Some(port) = guard.as_mut() else {
                 return Ok(BallStatus::default()); // not tethered → offline
             };
-            let lines = usb_command(port, "WIFI STATUS", &["<<WIFI"], Duration::from_secs(2))?;
-            let payload = lines
-                .iter()
-                .rev()
-                .find_map(|l| l.strip_prefix("<<WIFI ").map(|s| s.trim().to_string()))
-                .unwrap_or_default();
-            // idle | scanning | connecting:<ssid> | connected:<ip> | failed
-            let mut st = BallStatus::default();
-            if let Some(ip) = payload.strip_prefix("connected:") {
-                st.online = true;
-                st.ip = Some(ip.trim().to_string());
-            } else if let Some(ssid) = payload.strip_prefix("connecting:") {
-                st.net = Some(ssid.trim().to_string());
-            }
-            Ok::<BallStatus, String>(st)
+            Ok::<BallStatus, String>(read_status(port))
         })
         .await
         .map_err(|e| format!("join: {e}"))?
     }
 
-    /// Set a control. The firmware's control surface is network WS/MCP, not
-    /// wired yet, so this returns a clear "pending" error the UI surfaces.
+    /// Drive a control over the open USB console. sc01plus speaks FACE/SAY/FLEET;
+    /// `<<OK …` = applied, `<<ERR …` is surfaced. Components the firmware lacks
+    /// (brightness/volume/mode/llm — those are the ball's network WS/MCP surface,
+    /// not wired) return a clear "pending" error the UI shows.
     #[tauri::command]
     pub async fn device_control(
         id: String,
         component: String,
-        _value: serde_json::Value,
+        value: serde_json::Value,
+        state: tauri::State<'_, Arc<DeviceState>>,
     ) -> Result<(), String> {
-        if id != "bwoc-ball" {
+        if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
         }
-        Err(format!(
-            "{component}: network control (Wi-Fi WS/MCP) not wired yet — only USB Wi-Fi provisioning is connected"
-        ))
+        // value may be a JSON string or a bare scalar — coerce to a flat string.
+        let v = match &value {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let cmd = match component.as_str() {
+            "face" | "emotion" => format!("FACE {}", face_expr(&v)),
+            "say" | "tts_test" => format!("SAY {v}"),
+            "fleet" => format!("FLEET {v}"),
+            other => {
+                return Err(format!(
+                    "{other}: not available over USB — that control is the ball's network WS/MCP surface (not wired yet)"
+                ))
+            }
+        };
+        let app = Arc::clone(state.inner());
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut guard = app.serial.lock().map_err(|_| "serial lock poisoned")?;
+            let port = guard
+                .as_mut()
+                .ok_or("USB not connected — plug the device into this Mac")?;
+            let lines = usb_command(port, &cmd, &["<<OK", "<<ERR"], Duration::from_secs(3))?;
+            match lines
+                .iter()
+                .rev()
+                .find(|l| l.starts_with("<<OK") || l.starts_with("<<ERR"))
+            {
+                Some(l) if l.starts_with("<<OK") => Ok(()),
+                Some(l) => Err(l.trim_start_matches("<<ERR ").trim().to_string()),
+                None => Err("no reply from device".into()),
+            }
+        })
+        .await
+        .map_err(|e| format!("join: {e}"))?
     }
 }
 
@@ -423,7 +503,7 @@ mod imp {
         id: String,
         _state: tauri::State<'_, Arc<DeviceState>>,
     ) -> Result<BallStatus, String> {
-        if id != "bwoc-ball" {
+        if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
         }
         Ok(BallStatus::default()) // offline — no USB on mobile
@@ -434,8 +514,9 @@ mod imp {
         id: String,
         component: String,
         _value: serde_json::Value,
+        _state: tauri::State<'_, Arc<DeviceState>>,
     ) -> Result<(), String> {
-        if id != "bwoc-ball" {
+        if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
         }
         Err(format!(

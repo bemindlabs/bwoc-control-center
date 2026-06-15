@@ -7,9 +7,24 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Card, Stat, Dot, cn } from "./ui";
 
-// One entry per physical device. P1 ships bwoc-ball only; the registry shape is
-// ready for more (sc01-claw, esp32-cam, quadruped…).
-type DeviceId = "bwoc-ball";
+// One entry per physical device. Both speak the same 115200 USB console; the
+// backend routes control verbs by component (sc01plus: FACE/SAY/FLEET).
+type DeviceId = "bwoc-ball" | "sc01plus";
+
+const DEVICES: { id: DeviceId; name: string; chip: string; desc: string }[] = [
+  {
+    id: "bwoc-ball",
+    name: "bwoc·ball",
+    chip: "🟢",
+    desc: "ESP32-S3 N16R8 · GC9A01 round LCD · busaba",
+  },
+  {
+    id: "sc01plus",
+    name: "SC01 Plus",
+    chip: "🟦",
+    desc: "ESP32-S3 · SC01 Plus 3.5\" · fleet display + claw",
+  },
+];
 
 type BallStatus = {
   online: boolean;
@@ -62,7 +77,8 @@ function Slider({ label, value, onCommit }: { label: string; value: number; onCo
 }
 
 export default function Devices() {
-  const [id] = useState<DeviceId>("bwoc-ball");
+  const [id, setId] = useState<DeviceId>("bwoc-ball");
+  const dev = DEVICES.find((d) => d.id === id)!;
   const [st, setSt] = useState<BallStatus>({ online: false });
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string>("");
@@ -98,14 +114,30 @@ export default function Devices() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-4 px-4 py-4">
+      {/* ── device picker ───────────────────────────────── */}
+      <div className="flex gap-1.5 rounded-xl border border-border bg-card p-1">
+        {DEVICES.map((d) => (
+          <button
+            key={d.id}
+            onClick={() => setId(d.id)}
+            className={cn(
+              "flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+              id === d.id ? "bg-primary text-primary-foreground" : "text-muted-foreground",
+            )}
+          >
+            {d.chip} {d.name}
+          </button>
+        ))}
+      </div>
+
       {/* ── identity / status ───────────────────────────── */}
       <Card className="p-4">
         <div className="flex items-center gap-3">
           <Dot className={st.online ? "bg-emerald-500" : "bg-muted-foreground/40"} />
           <div className="flex-1">
-            <div className="font-mono text-sm font-semibold">{id}</div>
+            <div className="font-mono text-sm font-semibold">{dev.name}</div>
             <div className="text-xs text-muted-foreground">
-              ESP32-S3 N16R8 · GC9A01 round LCD · busaba {st.online ? "· online" : "· offline"}
+              {dev.desc} {st.online ? "· online" : "· offline"}
             </div>
           </div>
           <button onClick={refresh} className="rounded-md border border-border px-2 py-1 text-xs">
