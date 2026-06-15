@@ -28,3 +28,9 @@ toml = "0.8"
 rand = "0.8"
 hex = "0.4"
 
+# macOS-only: USB serial (device provisioning). serialport needs IOKit on mac;
+# on Linux it pulls libudev (absent on CI) and there's no iOS/Android backend —
+# so the device module gates the real impl to macOS and stubs everything else.
+[target.'cfg(target_os = "macos")'.dependencies]
+serialport = "4"
+

@@ -6,10 +6,12 @@
 //! is transport-blind.
 
 mod config;
+mod device;
 mod transport;
 
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::Manager;
 use transport::Transport;
 
@@ -238,6 +240,7 @@ fn local_hostname() -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(Arc::new(device::DeviceState::default()))
         .invoke_handler(tauri::generate_handler![
             fleet_snapshot,
             agent_inbox,
@@ -246,7 +249,14 @@ pub fn run() {
             controller_info,
             chat_send,
             add_host,
-            remove_host
+            remove_host,
+            device::usb_list_ports,
+            device::usb_connect,
+            device::usb_disconnect,
+            device::usb_wifi_scan,
+            device::usb_set_wifi,
+            device::device_status,
+            device::device_control
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
