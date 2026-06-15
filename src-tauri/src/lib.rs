@@ -103,6 +103,134 @@ async fn agent_inbox(
     }
 }
 
+/// Agent ids/names are kebab-case; reject anything that could smuggle a CLI
+/// flag or path segment into the shell-out.
+fn valid_agent_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && !id.starts_with('-')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+fn valid_backend(b: &str) -> bool {
+    matches!(
+        b,
+        "claude" | "codex" | "agy" | "kimi" | "ollama" | "openai" | "copilot" | "openrouter"
+    )
+}
+
+/// Create an agent — `bwoc new <name> --json …`. `name` is bare (no `agent-`
+/// prefix); the agent lands at `agents/agent-<name>`. Long-ish (incarnation
+/// writes the slot tree).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command: flat args mirror the JS call
+async fn agent_create(
+    app: tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+    name: String,
+    backend: String,
+    role: String,
+    primary_model: String,
+    scope: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let name = name.trim();
+    if !valid_agent_id(name) {
+        return Err("name must be lowercase letters/digits/'-'".into());
+    }
+    if !valid_backend(&backend) {
+        return Err("invalid backend".into());
+    }
+    if role.trim().is_empty() || primary_model.trim().is_empty() {
+        return Err("role and primary model are required".into());
+    }
+    match Transport::resolve(&cfg_dir(&app)?, host, workspace)? {
+        Transport::Local(t) => {
+            let target = format!("agents/agent-{name}");
+            // `bwoc new` requires the four verification gates at incarnation
+            // (it can't prompt here). Default to the no-op `true`; refine later.
+            let mut args = vec![
+                "new",
+                name,
+                "--json",
+                "--backend",
+                &backend,
+                "--role",
+                role.trim(),
+                "--primary-model",
+                primary_model.trim(),
+                "--lint-cmd",
+                "true",
+                "--format-cmd",
+                "true",
+                "--test-cmd",
+                "true",
+                "--build-cmd",
+                "true",
+                "--target",
+                &target,
+            ];
+            let scope = scope.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            if let Some(s) = scope {
+                args.push("--scope");
+                args.push(s);
+            }
+            t.bwoc_json(&args).await
+        }
+        Transport::Remote(r) => {
+            r.post_json(
+                "/agents",
+                serde_json::json!({
+                    "name": name,
+                    "backend": backend,
+                    "role": role.trim(),
+                    "primary_model": primary_model.trim(),
+                    "scope": scope,
+                }),
+                180,
+            )
+            .await
+        }
+    }
+}
+
+/// Retire an agent — `bwoc retire <id> --yes --json`. Destructive (removes the
+/// registry entry + files).
+#[tauri::command]
+async fn agent_retire(
+    app: tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+    agent: String,
+) -> Result<serde_json::Value, String> {
+    if !valid_agent_id(&agent) {
+        return Err("invalid agent id".into());
+    }
+    match Transport::resolve(&cfg_dir(&app)?, host, workspace)? {
+        Transport::Local(t) => t.bwoc_json(&["retire", &agent, "--yes", "--json"]).await,
+        Transport::Remote(r) => r.delete_json(&format!("/agents/{agent}")).await,
+    }
+}
+
+/// One agent's health + identity — `bwoc status <id> --json`.
+#[tauri::command]
+async fn agent_status(
+    app: tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+    agent: String,
+) -> Result<serde_json::Value, String> {
+    if !valid_agent_id(&agent) {
+        return Err("invalid agent id".into());
+    }
+    match Transport::resolve(&cfg_dir(&app)?, host, workspace)? {
+        Transport::Local(t) => t.bwoc_json(&["status", &agent, "--json"]).await,
+        Transport::Remote(r) => r.get_json(&format!("/agents/{agent}/status")).await,
+    }
+}
+
 /// Self-describe one host (local analogue of bwocd's `/hosts`).
 #[tauri::command]
 async fn host_info(
@@ -244,6 +372,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             fleet_snapshot,
             agent_inbox,
+            agent_create,
+            agent_retire,
+            agent_status,
             host_info,
             list_hosts,
             controller_info,

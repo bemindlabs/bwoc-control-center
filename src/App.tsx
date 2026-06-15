@@ -12,6 +12,7 @@ import Chat from "./Chat";
 import Settings from "./Settings";
 import Home from "./Home";
 import Devices from "./Devices";
+import Agents from "./Agents";
 import Onboarding from "./Onboarding";
 import Splash from "./Splash";
 
@@ -303,6 +304,13 @@ export default function App() {
             </table>
           </div>
         </Card>
+
+        {/* ── agent CRUD (create / retire / status) ──────── */}
+        <Agents
+          agents={agents}
+          host={activeHost}
+          onChanged={() => refresh(activeHost)}
+        />
 
         {/* ── health signals ─────────────────────────────── */}
         {health.length > 0 && (
