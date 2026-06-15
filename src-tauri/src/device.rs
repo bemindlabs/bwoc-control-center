@@ -206,6 +206,77 @@ mod imp {
         .map_err(|e| format!("join: {e}"))?
     }
 
+    /// Open a port at 115200 8N1, wait out the reset-on-open reboot, drain the
+    /// boot banner, and return the live handle.
+    fn open_console(name: &str) -> Result<Box<dyn serialport::SerialPort>, String> {
+        let mut p = serialport::new(name, 115_200)
+            .data_bits(serialport::DataBits::Eight)
+            .parity(serialport::Parity::None)
+            .stop_bits(serialport::StopBits::One)
+            .flow_control(serialport::FlowControl::None)
+            .timeout(Duration::from_millis(300))
+            .open()
+            .map_err(|e| format!("open {name}: {e}"))?;
+        std::thread::sleep(Duration::from_millis(2500));
+        let _ = read_lines(&mut p, Duration::from_millis(400), |_| false);
+        Ok(p)
+    }
+
+    /// Find and keep the device's USB console open so `device_status` can read it.
+    /// Only the sc01plus speaks the `<<` line protocol; probe each USB port
+    /// (PING → a `<<…` reply) and keep the first that answers. Opening a port
+    /// resets that ESP32-S3 once. The bwoc-ball runs xiaozhi firmware that does
+    /// not speak this console, so it reports "no USB console" here (its control is
+    /// the network WS/MCP channel, not wired yet). Returns the connected port path.
+    #[tauri::command]
+    pub async fn usb_autoconnect(
+        id: String,
+        state: tauri::State<'_, Arc<DeviceState>>,
+    ) -> Result<String, String> {
+        if !super::KNOWN_DEVICES.contains(&id.as_str()) {
+            return Err(format!("unknown device '{id}'"));
+        }
+        if id != "sc01plus" {
+            return Err(
+                "no USB console — control this device over its network channel (not wired yet)"
+                    .into(),
+            );
+        }
+        let app = Arc::clone(state.inner());
+        tauri::async_runtime::spawn_blocking(move || {
+            let ports = serialport::available_ports().map_err(|e| format!("list ports: {e}"))?;
+            let cands: Vec<String> = ports
+                .into_iter()
+                .filter(|p| !p.port_name.contains("/tty."))
+                .filter(|p| {
+                    matches!(p.port_type, serialport::SerialPortType::UsbPort(_))
+                        || p.port_name.contains("/cu.")
+                })
+                .map(|p| p.port_name)
+                .collect();
+            if cands.is_empty() {
+                return Err("no USB serial device found".into());
+            }
+            for name in cands {
+                let Ok(mut p) = open_console(&name) else {
+                    continue;
+                };
+                // PING → the sc01plus answers `<<PONG`; xiaozhi emits no `<<` lines.
+                let reply = usb_command(&mut p, "PING", &["<<"], Duration::from_millis(800))
+                    .unwrap_or_default();
+                if reply.iter().any(|l| l.starts_with("<<")) {
+                    let mut guard = app.serial.lock().map_err(|_| "serial lock poisoned")?;
+                    *guard = Some(p); // keep open for status/control reads
+                    return Ok(name);
+                }
+                drop(p); // not the console — closes, try the next port
+            }
+            Err("SC01 Plus console not found on any USB port".into())
+        })
+        .await
+        .map_err(|e| format!("join: {e}"))?
+    }
+
     /// Drop the stored port (closes it). Safe when nothing is open.
     #[tauri::command]
     pub async fn usb_disconnect(state: tauri::State<'_, Arc<DeviceState>>) -> Result<(), String> {
@@ -543,6 +614,17 @@ mod imp {
         _port: String,
         _state: tauri::State<'_, Arc<DeviceState>>,
     ) -> Result<(), String> {
+        Err(NO_USB.into())
+    }
+
+    #[tauri::command]
+    pub async fn usb_autoconnect(
+        id: String,
+        _state: tauri::State<'_, Arc<DeviceState>>,
+    ) -> Result<String, String> {
+        if !super::KNOWN_DEVICES.contains(&id.as_str()) {
+            return Err(format!("unknown device '{id}'"));
+        }
         Err(NO_USB.into())
     }
 
