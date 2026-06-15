@@ -53,11 +53,70 @@ pub struct BallStatus {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// bwoc-ball network control (platform-independent — plain HTTP, works on iOS).
+// The ball is a WS *client* to the self-hosted xiaozhi-server on bemind, so
+// control is pushed server-side; the app POSTs to the BWOC bridge overlaid onto
+// that server (see bwoc-device-server). emotion/brightness/volume map to the
+// firmware's controls; unsupported components surface the bridge's error.
+// ─────────────────────────────────────────────────────────────────────────────
+const BALL_BRIDGE: &str = "http://bemindlabs.tail32ca95.ts.net:8003/bwoc/ball";
+
+async fn ball_control(component: &str, value: &serde_json::Value) -> Result<(), String> {
+    let body = serde_json::json!({ "component": component, "value": value });
+    let res = reqwest::Client::new()
+        .post(format!("{BALL_BRIDGE}/control"))
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("ball bridge unreachable: {e}"))?;
+    if res.status().is_success() {
+        return Ok(());
+    }
+    let txt = res.text().await.unwrap_or_default();
+    Err(serde_json::from_str::<serde_json::Value>(&txt)
+        .ok()
+        .and_then(|v| v["error"].as_str().map(String::from))
+        .unwrap_or(txt))
+}
+
+async fn ball_status() -> BallStatus {
+    let mut st = BallStatus::default();
+    let Ok(res) = reqwest::Client::new()
+        .get(format!("{BALL_BRIDGE}/status"))
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+    else {
+        return st;
+    };
+    let Ok(v) = res.json::<serde_json::Value>().await else {
+        return st;
+    };
+    st.online = v["online"].as_bool().unwrap_or(false);
+    let d = &v["device"];
+    if let Some(b) = d["screen"]["brightness"].as_u64() {
+        st.brightness = Some(b as u8);
+    }
+    if let Some(vol) = d["audio_speaker"]["volume"].as_u64() {
+        st.volume = Some(vol as u8);
+    }
+    if let Some(bat) = d["battery"]["level"].as_u64() {
+        st.battery = Some(bat as u8);
+    }
+    if let Some(ssid) = d["network"]["ssid"].as_str().filter(|s| !s.is_empty()) {
+        st.net = Some(ssid.to_string());
+    }
+    st
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // macOS: real USB serial implementation.
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 mod imp {
     use super::BallStatus;
+    use super::{ball_control, ball_status};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -503,6 +562,10 @@ mod imp {
         if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
         }
+        // The ball's status comes from the network bridge, not the serial port.
+        if id == "bwoc-ball" {
+            return Ok(ball_status().await);
+        }
         let app = Arc::clone(state.inner());
         tauri::async_runtime::spawn_blocking(move || {
             let mut guard = app.serial.lock().map_err(|_| "serial lock poisoned")?;
@@ -530,6 +593,11 @@ mod imp {
     ) -> Result<(), String> {
         if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
+        }
+        // The ball is controlled over the network bridge (emotion/brightness/
+        // volume), not the serial console.
+        if id == "bwoc-ball" {
+            return ball_control(&component, &value).await;
         }
         // value may be a JSON string or a bare scalar — coerce to a flat string.
         let v = match &value {
@@ -590,7 +658,7 @@ mod imp {
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(not(target_os = "macos"))]
 mod imp {
-    use super::BallStatus;
+    use super::{ball_control, ball_status, BallStatus};
     use std::sync::Arc;
 
     #[derive(Default)]
@@ -657,18 +725,26 @@ mod imp {
         if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
         }
-        Ok(BallStatus::default()) // offline — no USB on mobile
+        // The ball is network-controlled (HTTP bridge) — works on mobile too.
+        if id == "bwoc-ball" {
+            return Ok(ball_status().await);
+        }
+        Ok(BallStatus::default()) // sc01plus needs USB — none on mobile → offline
     }
 
     #[tauri::command]
     pub async fn device_control(
         id: String,
         component: String,
-        _value: serde_json::Value,
+        value: serde_json::Value,
         _state: tauri::State<'_, Arc<DeviceState>>,
     ) -> Result<(), String> {
         if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
+        }
+        // The ball rides the network bridge (HTTP) — available on mobile.
+        if id == "bwoc-ball" {
+            return ball_control(&component, &value).await;
         }
         Err(format!(
             "{component}: device control not available on mobile"
