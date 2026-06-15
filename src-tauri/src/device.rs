@@ -1,18 +1,24 @@
-//! Physical-device control for the Devices tab — currently bwoc-ball (the
-//! ESP32-S3 XiaoZhi round-LCD ball, embodied as busaba).
+//! Physical-device control for the Devices tab — bwoc-ball (the ESP32-S3
+//! XiaoZhi round-LCD ball, embodied as busaba) and sc01plus (the WT32-SC01
+//! Plus fleet panel, embodied as Anna).
 //!
 //! Two channels, per the firmware:
-//!  - **USB serial** (115200 8N1, newline console) — Wi-Fi provisioning, and a
-//!    `WIFI STATUS` query we surface as online/ip. Fully wired here (ported from
-//!    bwoc-devices-app, which mirrors `tools/bwoc-push.py`). Desktop only —
-//!    `serialport` has no iOS/Android backend, so mobile gets stubs.
-//!  - **Network WS/MCP** (port 81, JSON-RPC over WebSocket) — the firmware's
-//!    real control surface (brightness/volume/status). NOT wired yet: it needs a
-//!    device address (no mDNS discovery), a WS auth token, and firmware MCP tools
-//!    for mode/emotion/tts/llm that don't exist yet. `device_control` therefore
-//!    degrades gracefully (the UI shows "control channel pending").
+//!  - **USB serial** (115200 8N1, newline console) — the full sc01plus control
+//!    surface: Wi-Fi provisioning, `INFO` status, and FACE/SAY/WHO/FLEET plus
+//!    BRIGHT/SOURCE/CLOUD config. Fully wired here (mirrors `tools/bwoc-push.py`).
+//!    Desktop only — `serialport` has no iOS/Android backend, so mobile gets
+//!    stubs.
+//!  - **Network WS/MCP** (port 81, JSON-RPC over WebSocket) — the ball's real
+//!    control surface (volume/mode/llm). NOT wired yet: it needs a device
+//!    address (no mDNS discovery), a WS auth token, and firmware MCP tools that
+//!    don't exist yet. Those ball-only `device_control` components degrade
+//!    gracefully (the UI shows "control channel pending").
 
 use serde::Serialize;
+
+/// Devices the tab knows about. Both speak the same 115200 USB console; control
+/// verbs differ (sc01plus: FACE/SAY/FLEET; bwoc-ball: provisioning + network).
+pub const KNOWN_DEVICES: [&str; 2] = ["bwoc-ball", "sc01plus"];
 
 /// Status the Devices tab renders. Fields beyond online/ip/net come from the
 /// network WS/MCP channel (not wired yet) and stay `None` over USB.
@@ -35,6 +41,15 @@ pub struct BallStatus {
     emotion: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     llm: Option<String>,
+    // sc01plus extras, parsed from its richer `INFO` JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>, // source policy: AUTO | USB | CLOUD
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cloud: Option<String>, // standalone transport: "off" | "mqtt <status>" | "pull <status>"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<String>, // last fleet snapshot summary line
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stale: Option<bool>, // fleet snapshot older than the firmware's stale window
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -309,15 +324,112 @@ mod imp {
         .map_err(|e| format!("join: {e}"))?
     }
 
-    /// Read status. Over USB this reports online + ip from `WIFI STATUS`; richer
-    /// fields need the network WS/MCP channel and stay absent. Offline when no
-    /// port is open.
+    /// Map a UI emotion/face name onto a firmware FACE expression. sc01plus
+    /// `face_set_expr()` understands the rich set
+    /// (idle|think|talk|busy|coding|happy|error|sleep|love|wink|sad|wow|cool|scan),
+    /// so pass those through; collapse the ball's extra emotion words onto the
+    /// nearest supported expression.
+    fn face_expr(v: &str) -> &'static str {
+        match v {
+            // direct firmware expressions
+            "idle" => "idle",
+            "think" | "thinking" | "analyzing" | "brainstorm" | "reporting" => "think",
+            "talk" | "speaking" | "listening" => "talk",
+            "busy" | "working" => "busy",
+            "coding" | "code" | "debugging" | "writing" => "coding",
+            "happy" | "celebrate" => "happy",
+            "love" => "love",
+            "wink" => "wink",
+            "sad" => "sad",
+            "wow" | "surprised" => "wow",
+            "cool" => "cool",
+            "scan" | "search" | "investigating" => "scan",
+            "sleep" => "sleep",
+            "error" | "angry" => "error",
+            _ => "idle",
+        }
+    }
+
+    /// Parse the rich `INFO` JSON (sc01plus) into a status. Falls back to
+    /// `WIFI STATUS` for firmwares without `INFO` (e.g. the bare ball console).
+    fn read_status(port: &mut Box<dyn serialport::SerialPort>) -> BallStatus {
+        let mut st = BallStatus::default();
+        let info = usb_command(port, "INFO", &["<<INFO", "<<ERR"], Duration::from_secs(2))
+            .unwrap_or_default();
+        if let Some(json) = info
+            .iter()
+            .find_map(|l| l.strip_prefix("<<INFO ").map(str::trim))
+        {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+                let wifi = &v["wifi"];
+                let status = wifi["status"].as_str().unwrap_or("");
+                st.online = status.starts_with("connected");
+                st.ip = wifi["sta_ip"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+                st.net = wifi["ssid"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+                // sc01plus extras (absent on the bare ball console → stay None).
+                if let Some(b) = v["bright"].as_u64() {
+                    // firmware backlight is 0..255; the UI slider is a percentage.
+                    st.brightness = Some(((b * 100) / 255) as u8);
+                }
+                let cloud = &v["cloud"];
+                st.source = cloud["src"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+                // cloud.mode: 0=off 1=mqtt 2=pull → human label + status string.
+                if let Some(mode) = cloud["mode"].as_u64() {
+                    let kind = match mode {
+                        1 => "mqtt",
+                        2 => "pull",
+                        _ => "off",
+                    };
+                    let cs = cloud["status"].as_str().unwrap_or("");
+                    st.cloud = Some(if cs.is_empty() || mode == 0 {
+                        kind.to_string()
+                    } else {
+                        format!("{kind} · {cs}")
+                    });
+                }
+                st.summary = v["summary"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+                st.stale = v["stale"].as_bool();
+                return st;
+            }
+        }
+        // fallback: WIFI STATUS → connected:<ip>
+        let lines = usb_command(port, "WIFI STATUS", &["<<WIFI"], Duration::from_secs(2))
+            .unwrap_or_default();
+        let payload = lines
+            .iter()
+            .rev()
+            .find_map(|l| l.strip_prefix("<<WIFI ").map(|s| s.trim().to_string()))
+            .unwrap_or_default();
+        if let Some(rest) = payload.strip_prefix("connected:") {
+            st.online = true;
+            // payload can be "192.168.1.150:inet" — keep just the ip
+            st.ip = Some(rest.split(':').next().unwrap_or(rest).trim().to_string());
+        } else if let Some(ssid) = payload.strip_prefix("connecting:") {
+            st.net = Some(ssid.trim().to_string());
+        }
+        st
+    }
+
+    /// Read device status over the open USB console (`INFO`, else `WIFI STATUS`).
+    /// Offline when no port is open. Same console on bwoc-ball + sc01plus.
     #[tauri::command]
     pub async fn device_status(
         id: String,
         state: tauri::State<'_, Arc<DeviceState>>,
     ) -> Result<BallStatus, String> {
-        if id != "bwoc-ball" {
+        if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
         }
         let app = Arc::clone(state.inner());
@@ -326,40 +438,77 @@ mod imp {
             let Some(port) = guard.as_mut() else {
                 return Ok(BallStatus::default()); // not tethered → offline
             };
-            let lines = usb_command(port, "WIFI STATUS", &["<<WIFI"], Duration::from_secs(2))?;
-            let payload = lines
-                .iter()
-                .rev()
-                .find_map(|l| l.strip_prefix("<<WIFI ").map(|s| s.trim().to_string()))
-                .unwrap_or_default();
-            // idle | scanning | connecting:<ssid> | connected:<ip> | failed
-            let mut st = BallStatus::default();
-            if let Some(ip) = payload.strip_prefix("connected:") {
-                st.online = true;
-                st.ip = Some(ip.trim().to_string());
-            } else if let Some(ssid) = payload.strip_prefix("connecting:") {
-                st.net = Some(ssid.trim().to_string());
-            }
-            Ok::<BallStatus, String>(st)
+            Ok::<BallStatus, String>(read_status(port))
         })
         .await
         .map_err(|e| format!("join: {e}"))?
     }
 
-    /// Set a control. The firmware's control surface is network WS/MCP, not
-    /// wired yet, so this returns a clear "pending" error the UI surfaces.
+    /// Drive a control over the open USB console. sc01plus speaks
+    /// FACE/SAY/WHO/FLEET/BRIGHT/SOURCE/CLOUD; `<<OK …` = applied, `<<ERR …` is
+    /// surfaced. Components the firmware lacks (volume/mode/llm — the ball's
+    /// network WS/MCP surface, not wired) return a clear "pending" error the UI
+    /// shows. A device that doesn't understand a verb replies `<<ERR`, so
+    /// sending a sc01plus-only verb to the ball degrades gracefully.
     #[tauri::command]
     pub async fn device_control(
         id: String,
         component: String,
-        _value: serde_json::Value,
+        value: serde_json::Value,
+        state: tauri::State<'_, Arc<DeviceState>>,
     ) -> Result<(), String> {
-        if id != "bwoc-ball" {
+        if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
         }
-        Err(format!(
-            "{component}: network control (Wi-Fi WS/MCP) not wired yet — only USB Wi-Fi provisioning is connected"
-        ))
+        // value may be a JSON string or a bare scalar — coerce to a flat string.
+        let v = match &value {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let cmd = match component.as_str() {
+            "face" | "emotion" => format!("FACE {}", face_expr(&v)),
+            "say" | "tts_test" => format!("SAY {v}"),
+            "fleet" => format!("FLEET {v}"),
+            // sc01plus identity nameplate (shown on the face page).
+            "who" => format!("WHO {v}"),
+            // sc01plus backlight — the UI slider is a percentage; the firmware
+            // BRIGHT command takes 0..255 (and clamps to its own minimum).
+            "brightness" => {
+                let pct: i64 = v.trim().parse().unwrap_or(50);
+                let raw = (pct.clamp(0, 100) * 255) / 100;
+                format!("BRIGHT {raw}")
+            }
+            // sc01plus source policy — auto | usb | cloud.
+            "source" => format!("SOURCE {}", v.to_lowercase()),
+            // sc01plus standalone transport. The UI passes the full argument
+            // string, e.g. "MQTT broker 1883 bwoc/fleet", "PULL https://… 15",
+            // or "OFF" — forwarded verbatim to the firmware CLOUD verb.
+            "cloud" => format!("CLOUD {v}"),
+            other => {
+                return Err(format!(
+                    "{other}: not available over USB — that control is the ball's network WS/MCP surface (not wired yet)"
+                ))
+            }
+        };
+        let app = Arc::clone(state.inner());
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut guard = app.serial.lock().map_err(|_| "serial lock poisoned")?;
+            let port = guard
+                .as_mut()
+                .ok_or("USB not connected — plug the device into this Mac")?;
+            let lines = usb_command(port, &cmd, &["<<OK", "<<ERR"], Duration::from_secs(3))?;
+            match lines
+                .iter()
+                .rev()
+                .find(|l| l.starts_with("<<OK") || l.starts_with("<<ERR"))
+            {
+                Some(l) if l.starts_with("<<OK") => Ok(()),
+                Some(l) => Err(l.trim_start_matches("<<ERR ").trim().to_string()),
+                None => Err("no reply from device".into()),
+            }
+        })
+        .await
+        .map_err(|e| format!("join: {e}"))?
     }
 }
 
@@ -423,7 +572,7 @@ mod imp {
         id: String,
         _state: tauri::State<'_, Arc<DeviceState>>,
     ) -> Result<BallStatus, String> {
-        if id != "bwoc-ball" {
+        if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
         }
         Ok(BallStatus::default()) // offline — no USB on mobile
@@ -434,8 +583,9 @@ mod imp {
         id: String,
         component: String,
         _value: serde_json::Value,
+        _state: tauri::State<'_, Arc<DeviceState>>,
     ) -> Result<(), String> {
-        if id != "bwoc-ball" {
+        if !super::KNOWN_DEVICES.contains(&id.as_str()) {
             return Err(format!("unknown device '{id}'"));
         }
         Err(format!(
