@@ -1,14 +1,15 @@
 // Devices — control & settings for BWOC physical devices.
-// P1: bwoc-ball (the ESP32-S3 XiaoZhi round-LCD ball, embodied as busaba).
+//  - bwoc-ball : ESP32-S3 XiaoZhi round-LCD ball, embodied as busaba.
+//  - sc01plus  : WT32-SC01 Plus fleet panel, embodied as Anna (Mac-side agent).
 // Controls route through the Rust `device_*` IPC commands (status read +
 // component control). USB Wi-Fi provisioning reuses the ported `usb_*` commands.
-// Component controls that need the live control channel degrade gracefully.
+// The UI is capability-aware: each device shows only the controls its firmware
+// understands over the shared 115200 USB console. Controls that need a channel
+// the firmware lacks degrade gracefully (the note shows "pending").
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Card, Stat, Dot, cn } from "./ui";
 
-// One entry per physical device. Both speak the same 115200 USB console; the
-// backend routes control verbs by component (sc01plus: FACE/SAY/FLEET).
 type DeviceId = "bwoc-ball" | "sc01plus";
 
 const DEVICES: { id: DeviceId; name: string; chip: string; desc: string }[] = [
@@ -21,8 +22,8 @@ const DEVICES: { id: DeviceId; name: string; chip: string; desc: string }[] = [
   {
     id: "sc01plus",
     name: "SC01 Plus",
-    chip: "🟦",
-    desc: "ESP32-S3 · SC01 Plus 3.5\" · fleet display + claw",
+    chip: "🪷",
+    desc: "ESP32-S3 · SC01 Plus 3.5\" · Anna fleet panel",
   },
 ];
 
@@ -36,12 +37,23 @@ type BallStatus = {
   mode?: number; // display mode index 0-6
   emotion?: string;
   llm?: string; // active brain
+  // sc01plus extras
+  source?: string; // AUTO | USB | CLOUD
+  cloud?: string; // off | "mqtt · <status>" | "pull · <status>"
+  summary?: string; // last fleet snapshot summary
+  stale?: boolean; // snapshot older than the firmware stale window
 };
 
-const MODES = ["face", "face+status", "text", "character", "clock", "rec", "info"];
-const EMOTIONS = [
+// bwoc-ball (XiaoZhi) display modes + its rich emotion set (network WS/MCP).
+const BALL_MODES = ["face", "face+status", "text", "character", "clock", "rec", "info"];
+const BALL_EMOTIONS = [
   "idle", "listening", "thinking", "speaking", "happy", "love",
   "coding", "debugging", "investigating", "writing", "brainstorm", "sleep",
+];
+// sc01plus FACE expressions understood by the firmware `face_set_expr()`.
+const SC01_FACES = [
+  "idle", "think", "talk", "busy", "coding", "scan",
+  "happy", "love", "wink", "cool", "wow", "sad", "error", "sleep",
 ];
 
 function Section({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
@@ -79,6 +91,7 @@ function Slider({ label, value, onCommit }: { label: string; value: number; onCo
 export default function Devices() {
   const [id, setId] = useState<DeviceId>("bwoc-ball");
   const dev = DEVICES.find((d) => d.id === id)!;
+  const isSc01 = id === "sc01plus";
   const [st, setSt] = useState<BallStatus>({ online: false });
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string>("");
@@ -146,69 +159,136 @@ export default function Devices() {
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat label="IP" value={st.ip ?? "—"} />
-          <Stat label="Battery" value={st.battery != null ? `${st.battery}%` : "—"} />
-          <Stat label="Brain" value={st.llm ?? "—"} />
           <Stat label="Net" value={st.net ?? "—"} />
+          {isSc01 ? (
+            <>
+              <Stat label="Source" value={st.source ?? "—"} />
+              <Stat label="Cloud" value={st.cloud ?? "—"} />
+            </>
+          ) : (
+            <>
+              <Stat label="Battery" value={st.battery != null ? `${st.battery}%` : "—"} />
+              <Stat label="Brain" value={st.llm ?? "—"} />
+            </>
+          )}
         </div>
+        {isSc01 && st.summary && (
+          <div className="mt-3 flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground">fleet:</span>
+            <span className="font-mono">{st.summary}</span>
+            {st.stale && (
+              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-500">stale</span>
+            )}
+          </div>
+        )}
       </Card>
 
       {note && <p className="px-1 text-xs text-muted-foreground">{note}</p>}
 
-      {/* ── display / interface ─────────────────────────── */}
-      <Section title="Display & Interface">
-        <div className="mb-3 flex flex-wrap gap-1.5">
-          {MODES.map((m, i) => (
-            <button key={m} onClick={() => control("mode", i)}
-              className={cn("rounded-md border px-2 py-1 text-xs",
-                st.mode === i ? "border-primary text-primary" : "border-border text-muted-foreground")}>
-              {i}:{m}
-            </button>
-          ))}
-        </div>
-        <Slider label="Brightness" value={st.brightness ?? 50} onCommit={(v) => control("brightness", v)} />
-      </Section>
+      {/* ════════════ sc01plus (Anna fleet panel) ════════════ */}
+      {isSc01 && (
+        <>
+          {/* face & identity ──────────────────────────────── */}
+          <Section title="Face & Identity">
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {SC01_FACES.map((e) => (
+                <button key={e} disabled={busy === "face"} onClick={() => control("face", e)}
+                  className={cn("rounded-md border px-2 py-1 text-xs",
+                    st.emotion === e ? "border-primary text-primary" : "border-border text-muted-foreground")}>
+                  {e}
+                </button>
+              ))}
+            </div>
+            <Nameplate onSet={(v) => control("who", v)} />
+            <SayLine onSay={(v) => control("say", v)} />
+          </Section>
 
-      {/* ── audio ───────────────────────────────────────── */}
-      <Section title="Audio" right={
-        <button disabled={busy === "tts_test"} onClick={() => control("tts_test", "สวัสดีค่ะที่รัก บุษบาพร้อมแล้วนะคะ")}
-          className="rounded-md border border-border px-2 py-1 text-xs">test voice</button>
-      }>
-        <Slider label="Volume" value={st.volume ?? 60} onCommit={(v) => control("volume", v)} />
-      </Section>
+          {/* display (brightness) ─────────────────────────── */}
+          <Section title="Display">
+            <Slider label="Brightness" value={st.brightness ?? 80} onCommit={(v) => control("brightness", v)} />
+          </Section>
 
-      {/* ── face / emotion ──────────────────────────────── */}
-      <Section title="Face & Emotion">
-        <div className="flex flex-wrap gap-1.5">
-          {EMOTIONS.map((e) => (
-            <button key={e} onClick={() => control("emotion", e)}
-              className={cn("rounded-md border px-2 py-1 text-xs",
-                st.emotion === e ? "border-primary text-primary" : "border-border text-muted-foreground")}>
-              {e}
-            </button>
-          ))}
-        </div>
-      </Section>
+          {/* source policy ────────────────────────────────── */}
+          <Section title="Source policy" right={
+            <span className="text-xs text-muted-foreground">USB-first arbitration</span>
+          }>
+            <div className="flex gap-1.5">
+              {["auto", "usb", "cloud"].map((s) => (
+                <button key={s} disabled={busy === "source"} onClick={() => control("source", s)}
+                  className={cn("flex-1 rounded-md border px-3 py-1.5 text-xs uppercase",
+                    st.source?.toLowerCase() === s ? "border-primary text-primary" : "border-border text-muted-foreground")}>
+                  {s}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              auto = cloud yields while USB pushes · usb = push-only · cloud = always apply cloud
+            </p>
+          </Section>
 
-      {/* ── brain / llm ─────────────────────────────────── */}
-      <Section title="Brain (LLM backend)">
-        <div className="flex gap-1.5">
-          <button onClick={() => control("llm", "busaba-ball")}
-            className={cn("rounded-md border px-3 py-1.5 text-xs",
-              st.llm === "busaba-ball" ? "border-primary text-primary" : "border-border")}>
-            Claude session (busaba-ball)
-          </button>
-          <button onClick={() => control("llm", "typhoon")}
-            className={cn("rounded-md border px-3 py-1.5 text-xs",
-              st.llm === "typhoon" ? "border-primary text-primary" : "border-border")}>
-            typhoon (local, fast)
-          </button>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Claude = full agent-busaba, ~10-20s/turn · typhoon = local, ~0.4s, no Mac/Claude dependency
-        </p>
-      </Section>
+          {/* cloud (standalone, no host on the LAN) ───────── */}
+          <Section title="Cloud — standalone ingest">
+            <CloudConfig onApply={(v) => control("cloud", v)} busy={busy === "cloud"} />
+          </Section>
+        </>
+      )}
 
-      {/* ── network / provisioning (USB) ────────────────── */}
+      {/* ════════════ bwoc-ball (busaba) ════════════ */}
+      {!isSc01 && (
+        <>
+          <Section title="Display & Interface">
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {BALL_MODES.map((m, i) => (
+                <button key={m} onClick={() => control("mode", i)}
+                  className={cn("rounded-md border px-2 py-1 text-xs",
+                    st.mode === i ? "border-primary text-primary" : "border-border text-muted-foreground")}>
+                  {i}:{m}
+                </button>
+              ))}
+            </div>
+            <Slider label="Brightness" value={st.brightness ?? 50} onCommit={(v) => control("brightness", v)} />
+          </Section>
+
+          <Section title="Audio" right={
+            <button disabled={busy === "tts_test"} onClick={() => control("tts_test", "สวัสดีค่ะที่รัก บุษบาพร้อมแล้วนะคะ")}
+              className="rounded-md border border-border px-2 py-1 text-xs">test voice</button>
+          }>
+            <Slider label="Volume" value={st.volume ?? 60} onCommit={(v) => control("volume", v)} />
+          </Section>
+
+          <Section title="Face & Emotion">
+            <div className="flex flex-wrap gap-1.5">
+              {BALL_EMOTIONS.map((e) => (
+                <button key={e} onClick={() => control("emotion", e)}
+                  className={cn("rounded-md border px-2 py-1 text-xs",
+                    st.emotion === e ? "border-primary text-primary" : "border-border text-muted-foreground")}>
+                  {e}
+                </button>
+              ))}
+            </div>
+          </Section>
+
+          <Section title="Brain (LLM backend)">
+            <div className="flex gap-1.5">
+              <button onClick={() => control("llm", "busaba-ball")}
+                className={cn("rounded-md border px-3 py-1.5 text-xs",
+                  st.llm === "busaba-ball" ? "border-primary text-primary" : "border-border")}>
+                Claude session (busaba-ball)
+              </button>
+              <button onClick={() => control("llm", "typhoon")}
+                className={cn("rounded-md border px-3 py-1.5 text-xs",
+                  st.llm === "typhoon" ? "border-primary text-primary" : "border-border")}>
+                typhoon (local, fast)
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Claude = full agent-busaba, ~10-20s/turn · typhoon = local, ~0.4s, no Mac/Claude dependency
+            </p>
+          </Section>
+        </>
+      )}
+
+      {/* ── network / provisioning (USB) — shared ───────── */}
       <Section title="Network — Wi-Fi provisioning (USB)">
         <DeviceProvisioning />
       </Section>
@@ -216,8 +296,95 @@ export default function Devices() {
   );
 }
 
-// USB Wi-Fi provisioning — reuses the ported usb_* commands (works when the ball
-// is plugged into this Mac over USB-C).
+// Set the face-page nameplate (sc01plus `WHO`). Defaults to the device agent.
+function Nameplate({ onSet }: { onSet: (v: string) => void }) {
+  const [name, setName] = useState("anna");
+  return (
+    <div className="mt-1 flex gap-2 text-xs">
+      <input placeholder="nameplate (WHO)" value={name} onChange={(e) => setName(e.target.value)}
+        className="flex-1 rounded-md border border-border bg-background px-2 py-1" />
+      <button disabled={!name.trim()} onClick={() => onSet(name.trim())}
+        className="rounded-md border border-border px-3 py-1">set name</button>
+    </div>
+  );
+}
+
+// Append an activity line to the face page (sc01plus `SAY`). The firmware
+// auto-detects the mood from keywords in the text.
+function SayLine({ onSay }: { onSay: (v: string) => void }) {
+  const [text, setText] = useState("");
+  const send = () => { if (text.trim()) { onSay(text.trim()); setText(""); } };
+  return (
+    <div className="mt-2 flex gap-2 text-xs">
+      <input placeholder="say… (appends an activity line)" value={text}
+        onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()}
+        className="flex-1 rounded-md border border-border bg-background px-2 py-1" />
+      <button disabled={!text.trim()} onClick={send}
+        className="rounded-md border border-border px-3 py-1">say</button>
+    </div>
+  );
+}
+
+// Standalone cloud ingest config (sc01plus `CLOUD MQTT|PULL|OFF`). The full
+// argument string is forwarded verbatim to the firmware CLOUD verb.
+function CloudConfig({ onApply, busy }: { onApply: (v: string) => void; busy: boolean }) {
+  const [tab, setTab] = useState<"mqtt" | "pull">("mqtt");
+  const [broker, setBroker] = useState("");
+  const [port, setPort] = useState("1883");
+  const [topic, setTopic] = useState("bwoc/fleet/snapshot");
+  const [url, setUrl] = useState("");
+  const [interval, setInterval] = useState("15");
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="flex gap-1.5">
+        {(["mqtt", "pull"] as const).map((t) => (
+          <button key={t} onClick={() => setTab(t)}
+            className={cn("rounded-md border px-3 py-1 uppercase",
+              tab === t ? "border-primary text-primary" : "border-border text-muted-foreground")}>
+            {t}
+          </button>
+        ))}
+        <button disabled={busy} onClick={() => onApply("OFF")}
+          className="ml-auto rounded-md border border-border px-3 py-1">disable</button>
+      </div>
+
+      {tab === "mqtt" ? (
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <input placeholder="broker host" value={broker} onChange={(e) => setBroker(e.target.value)}
+              className="flex-1 rounded-md border border-border bg-background px-2 py-1" />
+            <input placeholder="port" value={port} onChange={(e) => setPort(e.target.value)}
+              className="w-20 rounded-md border border-border bg-background px-2 py-1" />
+          </div>
+          <input placeholder="topic" value={topic} onChange={(e) => setTopic(e.target.value)}
+            className="w-full rounded-md border border-border bg-background px-2 py-1" />
+          <button disabled={busy || !broker.trim()}
+            onClick={() => onApply(`MQTT ${broker.trim()} ${port.trim() || 1883} ${topic.trim()}`)}
+            className="rounded-md border border-primary px-3 py-1.5 text-primary">subscribe broker</button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <input placeholder="https://host/fleet.json" value={url} onChange={(e) => setUrl(e.target.value)}
+            className="w-full rounded-md border border-border bg-background px-2 py-1" />
+          <div className="flex gap-2">
+            <input placeholder="interval (s)" value={interval} onChange={(e) => setInterval(e.target.value)}
+              className="w-28 rounded-md border border-border bg-background px-2 py-1" />
+            <button disabled={busy || !url.trim()}
+              onClick={() => onApply(`PULL ${url.trim()} ${interval.trim() || 15}`)}
+              className="rounded-md border border-primary px-3 py-1.5 text-primary">poll URL</button>
+          </div>
+        </div>
+      )}
+      <p className="text-muted-foreground">
+        Needs a working STA Wi-Fi link. MQTT needs a producer publishing the snapshot to the same topic.
+      </p>
+    </div>
+  );
+}
+
+// USB Wi-Fi provisioning — reuses the ported usb_* commands (works when the
+// device is plugged into this Mac over USB-C).
 function DeviceProvisioning() {
   const [ports, setPorts] = useState<string[]>([]);
   const [port, setPort] = useState<string>("");

@@ -1,16 +1,18 @@
-//! Physical-device control for the Devices tab — currently bwoc-ball (the
-//! ESP32-S3 XiaoZhi round-LCD ball, embodied as busaba).
+//! Physical-device control for the Devices tab — bwoc-ball (the ESP32-S3
+//! XiaoZhi round-LCD ball, embodied as busaba) and sc01plus (the WT32-SC01
+//! Plus fleet panel, embodied as Anna).
 //!
 //! Two channels, per the firmware:
-//!  - **USB serial** (115200 8N1, newline console) — Wi-Fi provisioning, and a
-//!    `WIFI STATUS` query we surface as online/ip. Fully wired here (ported from
-//!    bwoc-devices-app, which mirrors `tools/bwoc-push.py`). Desktop only —
-//!    `serialport` has no iOS/Android backend, so mobile gets stubs.
-//!  - **Network WS/MCP** (port 81, JSON-RPC over WebSocket) — the firmware's
-//!    real control surface (brightness/volume/status). NOT wired yet: it needs a
-//!    device address (no mDNS discovery), a WS auth token, and firmware MCP tools
-//!    for mode/emotion/tts/llm that don't exist yet. `device_control` therefore
-//!    degrades gracefully (the UI shows "control channel pending").
+//!  - **USB serial** (115200 8N1, newline console) — the full sc01plus control
+//!    surface: Wi-Fi provisioning, `INFO` status, and FACE/SAY/WHO/FLEET plus
+//!    BRIGHT/SOURCE/CLOUD config. Fully wired here (mirrors `tools/bwoc-push.py`).
+//!    Desktop only — `serialport` has no iOS/Android backend, so mobile gets
+//!    stubs.
+//!  - **Network WS/MCP** (port 81, JSON-RPC over WebSocket) — the ball's real
+//!    control surface (volume/mode/llm). NOT wired yet: it needs a device
+//!    address (no mDNS discovery), a WS auth token, and firmware MCP tools that
+//!    don't exist yet. Those ball-only `device_control` components degrade
+//!    gracefully (the UI shows "control channel pending").
 
 use serde::Serialize;
 
@@ -39,6 +41,15 @@ pub struct BallStatus {
     emotion: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     llm: Option<String>,
+    // sc01plus extras, parsed from its richer `INFO` JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>, // source policy: AUTO | USB | CLOUD
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cloud: Option<String>, // standalone transport: "off" | "mqtt <status>" | "pull <status>"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<String>, // last fleet snapshot summary line
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stale: Option<bool>, // fleet snapshot older than the firmware's stale window
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -313,16 +324,28 @@ mod imp {
         .map_err(|e| format!("join: {e}"))?
     }
 
-    /// Map a UI emotion/face name onto one of the firmware's six FACE
-    /// expressions (idle|think|talk|busy|happy|error).
+    /// Map a UI emotion/face name onto a firmware FACE expression. sc01plus
+    /// `face_set_expr()` understands the rich set
+    /// (idle|think|talk|busy|coding|happy|error|sleep|love|wink|sad|wow|cool|scan),
+    /// so pass those through; collapse the ball's extra emotion words onto the
+    /// nearest supported expression.
     fn face_expr(v: &str) -> &'static str {
         match v {
-            "thinking" | "debugging" | "investigating" | "analyzing" | "brainstorm" | "coding"
-            | "writing" | "reporting" | "think" => "think",
-            "speaking" | "listening" | "talk" => "talk",
-            "happy" | "love" | "celebrate" | "cool" | "wink" => "happy",
-            "error" | "sad" | "angry" => "error",
+            // direct firmware expressions
+            "idle" => "idle",
+            "think" | "thinking" | "analyzing" | "brainstorm" | "reporting" => "think",
+            "talk" | "speaking" | "listening" => "talk",
             "busy" | "working" => "busy",
+            "coding" | "code" | "debugging" | "writing" => "coding",
+            "happy" | "celebrate" => "happy",
+            "love" => "love",
+            "wink" => "wink",
+            "sad" => "sad",
+            "wow" | "surprised" => "wow",
+            "cool" => "cool",
+            "scan" | "search" | "investigating" => "scan",
+            "sleep" => "sleep",
+            "error" | "angry" => "error",
             _ => "idle",
         }
     }
@@ -349,6 +372,35 @@ mod imp {
                     .as_str()
                     .filter(|s| !s.is_empty())
                     .map(String::from);
+                // sc01plus extras (absent on the bare ball console → stay None).
+                if let Some(b) = v["bright"].as_u64() {
+                    // firmware backlight is 0..255; the UI slider is a percentage.
+                    st.brightness = Some(((b * 100) / 255) as u8);
+                }
+                let cloud = &v["cloud"];
+                st.source = cloud["src"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+                // cloud.mode: 0=off 1=mqtt 2=pull → human label + status string.
+                if let Some(mode) = cloud["mode"].as_u64() {
+                    let kind = match mode {
+                        1 => "mqtt",
+                        2 => "pull",
+                        _ => "off",
+                    };
+                    let cs = cloud["status"].as_str().unwrap_or("");
+                    st.cloud = Some(if cs.is_empty() || mode == 0 {
+                        kind.to_string()
+                    } else {
+                        format!("{kind} · {cs}")
+                    });
+                }
+                st.summary = v["summary"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+                st.stale = v["stale"].as_bool();
                 return st;
             }
         }
@@ -392,10 +444,12 @@ mod imp {
         .map_err(|e| format!("join: {e}"))?
     }
 
-    /// Drive a control over the open USB console. sc01plus speaks FACE/SAY/FLEET;
-    /// `<<OK …` = applied, `<<ERR …` is surfaced. Components the firmware lacks
-    /// (brightness/volume/mode/llm — those are the ball's network WS/MCP surface,
-    /// not wired) return a clear "pending" error the UI shows.
+    /// Drive a control over the open USB console. sc01plus speaks
+    /// FACE/SAY/WHO/FLEET/BRIGHT/SOURCE/CLOUD; `<<OK …` = applied, `<<ERR …` is
+    /// surfaced. Components the firmware lacks (volume/mode/llm — the ball's
+    /// network WS/MCP surface, not wired) return a clear "pending" error the UI
+    /// shows. A device that doesn't understand a verb replies `<<ERR`, so
+    /// sending a sc01plus-only verb to the ball degrades gracefully.
     #[tauri::command]
     pub async fn device_control(
         id: String,
@@ -415,6 +469,21 @@ mod imp {
             "face" | "emotion" => format!("FACE {}", face_expr(&v)),
             "say" | "tts_test" => format!("SAY {v}"),
             "fleet" => format!("FLEET {v}"),
+            // sc01plus identity nameplate (shown on the face page).
+            "who" => format!("WHO {v}"),
+            // sc01plus backlight — the UI slider is a percentage; the firmware
+            // BRIGHT command takes 0..255 (and clamps to its own minimum).
+            "brightness" => {
+                let pct: i64 = v.trim().parse().unwrap_or(50);
+                let raw = (pct.clamp(0, 100) * 255) / 100;
+                format!("BRIGHT {raw}")
+            }
+            // sc01plus source policy — auto | usb | cloud.
+            "source" => format!("SOURCE {}", v.to_lowercase()),
+            // sc01plus standalone transport. The UI passes the full argument
+            // string, e.g. "MQTT broker 1883 bwoc/fleet", "PULL https://… 15",
+            // or "OFF" — forwarded verbatim to the firmware CLOUD verb.
+            "cloud" => format!("CLOUD {v}"),
             other => {
                 return Err(format!(
                     "{other}: not available over USB — that control is the ball's network WS/MCP surface (not wired yet)"

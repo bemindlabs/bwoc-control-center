@@ -1,5 +1,5 @@
 //! Shell-out layer: bwocd never reimplements bwoc logic — the CLI is the
-//! single source of truth (the same rule bwoc-mcc and bwoc-devices-app hold).
+//! single source of truth (the same rule bwoc-mcc holds).
 
 use std::path::Path;
 
