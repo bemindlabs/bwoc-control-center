@@ -18,7 +18,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4", features = ["derive", "env"] }
 toml = "0.8"
 anyhow = "1"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors"] }
 
 [dev-dependencies]
 rand = "0.8"
-tower = { version = "0.5", features = ["util"] }
