@@ -10,7 +10,7 @@ use axum::{
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use std::sync::Arc;
 
@@ -19,7 +19,14 @@ use crate::bwoc::bwoc_json;
 use crate::AppState;
 
 pub fn router(state: Arc<AppState>) -> Router {
+    // Build the CORS layer (if a browser origin is configured) before `state`
+    // is moved into the router via `with_state`.
+    let cors = cors_layer(state.cors_origin.as_deref());
+
     let signed = Router::new()
+        // whoami: the calling controller's identity + granted caps + version.
+        // Lets a browser client confirm enrollment and render its UI to match.
+        .route("/whoami", get(whoami))
         .route("/hosts", get(hosts))
         .route("/fleet", get(fleet))
         // CRUD: create (POST), read one (GET), retire (DELETE). All mutating
@@ -37,7 +44,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             verify_signed_request,
         ));
 
-    Router::new()
+    let app = Router::new()
         .route(
             "/health",
             get(|| async { Json(serde_json::json!({"ok": true})) }),
@@ -46,7 +53,57 @@ pub fn router(state: Arc<AppState>) -> Router {
         // own key), so it sits outside the registry middleware.
         .route("/enroll", post(enroll))
         .merge(signed)
-        .with_state(state)
+        .with_state(state);
+
+    // CORS wraps the whole router so it also answers preflight for /enroll and
+    // the signed routes. tower-http intercepts the OPTIONS preflight before the
+    // signing middleware, so an unsigned preflight is never refused.
+    match cors {
+        Some(layer) => app.layer(layer),
+        None => app,
+    }
+}
+
+/// CORS layer for the browser (chrome-extension) client. `None` when no origin
+/// is configured — native/CLI controllers need no CORS. The custom `X-BWOC-*`
+/// signing headers make every request non-simple, so the browser preflights
+/// with OPTIONS; this layer answers it and allows the signing headers back.
+fn cors_layer(origin: Option<&str>) -> Option<tower_http::cors::CorsLayer> {
+    use axum::http::{header, HeaderName, HeaderValue, Method};
+    use tower_http::cors::{AllowOrigin, CorsLayer};
+
+    let origin = origin?;
+    let allow_origin = if origin == "*" {
+        AllowOrigin::any()
+    } else {
+        AllowOrigin::exact(HeaderValue::from_str(origin).ok()?)
+    };
+    let allow_headers = [
+        header::CONTENT_TYPE,
+        HeaderName::from_static("x-bwoc-agent"),
+        HeaderName::from_static("x-bwoc-nonce"),
+        HeaderName::from_static("x-bwoc-timestamp"),
+        HeaderName::from_static("x-bwoc-body-sha256"),
+        HeaderName::from_static("x-bwoc-signature"),
+    ];
+    Some(
+        CorsLayer::new()
+            .allow_origin(allow_origin)
+            .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+            .allow_headers(allow_headers)
+            // No `allow_credentials` — auth is header-borne, there are no cookies.
+            .max_age(std::time::Duration::from_secs(600)),
+    )
+}
+
+/// The calling controller's identity, granted capabilities, and the daemon
+/// version. Powers the extension's enrollment check + capability-aware UI.
+async fn whoami(Extension(caller): Extension<auth::Caller>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "controller_id": caller.id,
+        "caps": caller.caps,
+        "bwocd_version": env!("CARGO_PKG_VERSION"),
+    }))
 }
 
 #[derive(serde::Deserialize)]
@@ -184,7 +241,19 @@ async fn verify_signed_request(
             // Access log: who reached which route. Pairs with the REFUSED line
             // below so the journal is a complete audit trail, not just failures.
             eprintln!("bwocd: OK {} {} sender={sender}", parts.method, canonical);
-            let req = Request::from_parts(parts, axum::body::Body::from(bytes));
+            // Attach the verified caller (id + parsed caps) for handlers that
+            // gate on capability (/whoami today; /cli mutations in P2).
+            let caps = state
+                .registry
+                .scope_of(&sender)
+                .map(auth::parse_caps)
+                .unwrap_or_else(|| vec!["read".to_string()]);
+            let caller = auth::Caller {
+                id: sender.clone(),
+                caps,
+            };
+            let mut req = Request::from_parts(parts, axum::body::Body::from(bytes));
+            req.extensions_mut().insert(caller);
             next.run(req).await
         }
         Err(reason) => {

@@ -142,8 +142,17 @@ REST mirror ของ `bwoc --json` + SSE สำหรับ live. ทุก rou
 | `POST` | `/tasks` / `/tasks/:id/{claim,complete,approve}` | task ops | write |
 | `GET`/`PUT` | `/agents/:id/config` | manifest / .env / routes.toml | **write+confirm** |
 | `GET` | `/hosts` | self-describe (hostname, workspace, bwoc version) | read |
+| `GET` | `/whoami` | calling controller's id + granted caps + `bwocd_version` | read |
 
 **หมายเหตุ:** interactive flows (`spawn`/`chat` ที่ต้อง TTY) บน mobile = **stream over SSE/WS** (ไม่ใช่เปิด Terminal.app แบบ desktop). อาจ reuse `bwoc-harness --chat` chat_proto (แบบ bwoc-chat) ในเฟสหลัง
+
+**Browser clients (chrome extension):** custom `X-BWOC-*` signing headers make every
+request CORS-non-simple, so bwocd answers the `OPTIONS` preflight and echoes an allow-origin
+when started with `--cors-origin chrome-extension://<id>` (or `--insecure-cors` for `*` in
+dev). The preflight is handled outside the signing middleware (an unsigned `OPTIONS` is never
+refused). `/whoami` lets the extension confirm enrollment and grey out verbs its caps can't run.
+The `scope` field in `controllers.toml` is a comma-separated capability set
+(`read,write,exec,dangerous`; `read` implicit), surfaced via `/whoami`; per-route enforcement lands with the `/cli` proxy.
 
 ---
 

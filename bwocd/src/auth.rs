@@ -46,7 +46,9 @@ pub struct ControllerEntry {
     pub id: String,
     /// 32-byte ed25519 public key, hex.
     pub public_key: String,
-    /// "read" or "write". Phase 1 serves read-only routes regardless.
+    /// Capability set, comma-separated (`"read"`, `"read,write"`,
+    /// `"read,write,exec,dangerous"`). Parsed via [`parse_caps`]; `read` is
+    /// implicit. Read routes serve any enrolled controller regardless.
     #[serde(default = "default_scope")]
     pub scope: String,
 }
@@ -93,6 +95,36 @@ impl ControllerRegistry {
     fn key_of(&self, id: &str) -> Option<&VerifyingKey> {
         self.by_id.get(id).map(|(k, _)| k)
     }
+
+    /// The raw `scope` string a controller registered with (e.g. `"read,write"`).
+    /// `None` if the id is unknown.
+    pub fn scope_of(&self, id: &str) -> Option<&str> {
+        self.by_id.get(id).map(|(_, s)| s.as_str())
+    }
+}
+
+/// The capabilities a controller holds, parsed from its `scope` field. `read`
+/// is implicit for every enrolled controller; `write`/`exec`/`dangerous` are
+/// opt-in and independent (holding `dangerous` does not imply `write`) — the
+/// same tier model bwoc-mcp enforces with `--allow-*`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct Caller {
+    pub id: String,
+    pub caps: Vec<String>,
+}
+
+/// Parse a `scope` field into a normalised capability list. Accepts a
+/// comma-separated string (`"read,write,exec"`); `read` is always present.
+/// Unknown tokens are dropped (forward-compatible).
+pub fn parse_caps(scope: &str) -> Vec<String> {
+    let mut caps = vec!["read".to_string()];
+    for tok in scope.split(',') {
+        let t = tok.trim().to_ascii_lowercase();
+        if matches!(t.as_str(), "write" | "exec" | "dangerous") && !caps.contains(&t) {
+            caps.push(t);
+        }
+    }
+    caps
 }
 
 /// Sliding-window replay defence: remember (sender, nonce) until the paired
@@ -350,6 +382,34 @@ mod tests {
     fn canonical_path_sorts_query() {
         assert_eq!(canonical_path("/fleet", None), "/fleet");
         assert_eq!(canonical_path("/a", Some("z=2&a=1")), "/a?a=1&z=2");
+    }
+
+    #[test]
+    fn parse_caps_read_implicit_and_independent() {
+        assert_eq!(parse_caps(""), vec!["read"]);
+        assert_eq!(parse_caps("read"), vec!["read"]);
+        assert_eq!(parse_caps("read,write"), vec!["read", "write"]);
+        // dangerous does not imply write — tiers are independent.
+        assert_eq!(parse_caps("dangerous"), vec!["read", "dangerous"]);
+        assert_eq!(
+            parse_caps(" read , write , exec , dangerous "),
+            vec!["read", "write", "exec", "dangerous"]
+        );
+        // unknown tokens dropped; duplicates collapsed.
+        assert_eq!(parse_caps("write,bogus,write"), vec!["read", "write"]);
+    }
+
+    #[test]
+    fn scope_of_exposes_registered_scope() {
+        let key = SigningKey::from_bytes(&[3u8; 32]);
+        let reg = ControllerRegistry::from_entries(vec![ControllerEntry {
+            id: "c1".into(),
+            public_key: hex::encode(key.verifying_key().to_bytes()),
+            scope: "read,exec".into(),
+        }])
+        .unwrap();
+        assert_eq!(reg.scope_of("c1"), Some("read,exec"));
+        assert_eq!(reg.scope_of("nope"), None);
     }
 
     #[test]

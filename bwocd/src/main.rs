@@ -31,6 +31,16 @@ struct Args {
     /// Controller registry (TOML). Default: <workspace>/.bwoc/bwocd/controllers.toml
     #[arg(long)]
     controllers: Option<PathBuf>,
+
+    /// CORS allow-origin for a browser client (the chrome extension), e.g.
+    /// `chrome-extension://<id>`. Omit for native/CLI controllers (no CORS).
+    #[arg(long)]
+    cors_origin: Option<String>,
+
+    /// Dev escape: allow any origin (`*`) for CORS. Mirrors bwoc-mcp's
+    /// `--http-insecure` posture — never use against a shared workspace.
+    #[arg(long)]
+    insecure_cors: bool,
 }
 
 #[tokio::main]
@@ -59,10 +69,21 @@ async fn main() -> anyhow::Result<()> {
         controllers_path.display()
     );
 
+    let cors_origin = if args.insecure_cors {
+        eprintln!("bwocd: WARNING --insecure-cors enabled — allowing any browser origin");
+        Some("*".to_string())
+    } else {
+        args.cors_origin
+    };
+    if let Some(o) = &cors_origin {
+        eprintln!("bwocd: CORS allow-origin = {o}");
+    }
+
     let state = Arc::new(AppState {
         workspace: args.workspace,
         registry,
         nonces: auth::NonceStore::default(),
+        cors_origin,
     });
 
     let app = routes::router(state);
