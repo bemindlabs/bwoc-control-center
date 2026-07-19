@@ -15,7 +15,7 @@ use axum::{
 use std::sync::Arc;
 
 use crate::auth;
-use crate::bwoc::bwoc_json;
+use crate::bwoc::{bwoc_exec, bwoc_json};
 use crate::AppState;
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -39,6 +39,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         // chat = one-shot `bwoc run`; spawns the agent backend (costs tokens).
         // Reachable by any enrolled controller (no per-route scope gate yet).
         .route("/agents/{id}/chat", post(chat))
+        // /cli = capability-gated generic verb proxy (allowlist + per-verb cap).
+        .route("/cli", post(cli))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             verify_signed_request,
@@ -510,4 +512,157 @@ fn valid_backend(b: &str) -> bool {
 fn upstream_error(e: String) -> Response {
     eprintln!("bwocd: upstream bwoc error: {e}");
     (StatusCode::BAD_GATEWAY, "bwoc CLI error").into_response()
+}
+
+// ── /cli — capability-gated generic verb proxy ───────────────────────────────
+//
+// A remote controller drives a bounded set of `bwoc` verbs through one signed
+// endpoint (the other routes hardcode a handful; this generalizes them without
+// bwocd reimplementing bwoc). It is deliberately narrow: an allowlist of verbs,
+// each mapped to a required capability, with the workspace pinned by bwocd.
+
+#[derive(serde::Deserialize)]
+struct CliBody {
+    argv: Vec<String>,
+    /// Reserved: long verbs (`run`) carry their own `--timeout` in `argv`;
+    /// bwocd does not impose a separate server-side bound here.
+    #[serde(default)]
+    #[allow(dead_code)]
+    timeout_secs: Option<u64>,
+}
+
+/// The capability a `/cli` verb requires, or `None` if the verb is not proxied.
+/// `read` is implicit for every enrolled controller; `write`/`exec`/`dangerous`
+/// must be explicitly granted at enrollment. Matches on the leading NON-flag
+/// tokens (the subcommand path) so trailing flags/values don't change the class.
+fn required_cap_for(argv: &[String]) -> Option<&'static str> {
+    let words: Vec<&str> = argv
+        .iter()
+        .map(|s| s.as_str())
+        .take_while(|w| !w.starts_with('-'))
+        .collect();
+    match words.as_slice() {
+        // read (any enrolled controller)
+        ["list", ..] | ["status", ..] | ["receipts", ..] => Some("read"),
+        ["fleet", "health", ..] | ["fleet", "status", ..] => Some("read"),
+        ["team", "list", ..] => Some("read"),
+        ["task", "list", ..] => Some("read"),
+        ["memory", "list", ..] | ["memory", "show", ..] | ["memory", "search", ..] => Some("read"),
+        // write
+        ["send", ..] => Some("write"),
+        ["task", "add", ..] | ["task", "claim", ..] | ["task", "complete", ..] => Some("write"),
+        // exec
+        ["run", ..] => Some("exec"),
+        // Creation/retirement have dedicated routes; dangerous verbs and anything
+        // unrecognized are refused here.
+        _ => None,
+    }
+}
+
+/// Reject args that would let a caller escape bwocd's confinement: bwocd sets
+/// `--workspace` itself, so a caller-supplied one (which would retarget a
+/// different workspace, or duplicate-error) is forbidden.
+fn arg_is_forbidden(a: &str) -> bool {
+    a == "--workspace" || a.starts_with("--workspace=") || a == "-C"
+}
+
+async fn cli(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<auth::Caller>,
+    Json(body): Json<CliBody>,
+) -> Response {
+    if body.argv.is_empty() {
+        return (StatusCode::BAD_REQUEST, "empty argv").into_response();
+    }
+    if body.argv.iter().any(|a| arg_is_forbidden(a)) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "forbidden arg: --workspace is set by bwocd",
+        )
+            .into_response();
+    }
+    let cap = match required_cap_for(&body.argv) {
+        Some(c) => c,
+        None => return (StatusCode::FORBIDDEN, "verb not allowed via /cli").into_response(),
+    };
+    // `read` is implicit; other tiers must be explicitly granted to this caller.
+    if cap != "read" && !caller.caps.iter().any(|c| c == cap) {
+        return (
+            StatusCode::FORBIDDEN,
+            format!("this verb needs the `{cap}` capability"),
+        )
+            .into_response();
+    }
+    eprintln!(
+        "bwocd: CLI [{}] tier={cap} by {}",
+        body.argv.join(" "),
+        caller.id
+    );
+    match bwoc_exec(&state.workspace, &body.argv).await {
+        Ok(out) => Json(serde_json::json!({
+            "ok": out.exit_code == 0,
+            "exit_code": out.exit_code,
+            "stdout": out.stdout,
+            "stderr": out.stderr,
+            "tier": cap,
+        }))
+        .into_response(),
+        Err(e) => upstream_error(e),
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::{arg_is_forbidden, required_cap_for};
+
+    fn v(s: &str) -> Vec<String> {
+        s.split_whitespace().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn read_verbs_need_read() {
+        assert_eq!(required_cap_for(&v("list --json")), Some("read"));
+        assert_eq!(
+            required_cap_for(&v("status agent-anna --json")),
+            Some("read")
+        );
+        assert_eq!(required_cap_for(&v("team list --json")), Some("read"));
+        assert_eq!(
+            required_cap_for(&v("task list tianting --json")),
+            Some("read")
+        );
+        assert_eq!(required_cap_for(&v("memory list --json")), Some("read"));
+    }
+
+    #[test]
+    fn mutating_verbs_need_write_or_exec() {
+        assert_eq!(required_cap_for(&v("send agent-anna hi")), Some("write"));
+        assert_eq!(
+            required_cap_for(&v("task add tianting do-x")),
+            Some("write")
+        );
+        assert_eq!(
+            required_cap_for(&v("run agent-anna --task x")),
+            Some("exec")
+        );
+    }
+
+    #[test]
+    fn unlisted_and_dangerous_verbs_are_refused() {
+        assert_eq!(required_cap_for(&v("retire agent-x --yes")), None);
+        assert_eq!(required_cap_for(&v("new foo")), None);
+        assert_eq!(required_cap_for(&v("rm -rf /")), None);
+        assert_eq!(required_cap_for(&v("")), None);
+        // `task` alone (no sub-verb) is not a known read/write path.
+        assert_eq!(required_cap_for(&v("task")), None);
+    }
+
+    #[test]
+    fn workspace_override_is_forbidden() {
+        assert!(arg_is_forbidden("--workspace"));
+        assert!(arg_is_forbidden("--workspace=/etc"));
+        assert!(arg_is_forbidden("-C"));
+        assert!(!arg_is_forbidden("--json"));
+        assert!(!arg_is_forbidden("--task"));
+    }
 }
