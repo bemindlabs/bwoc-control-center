@@ -25,10 +25,14 @@ See **[DESIGN.md](DESIGN.md)** for the full architecture, API surface, and MVP p
 
 ## Status
 
-🚧 **Phase 1** — design closed (12 decisions, see [DESIGN.md](DESIGN.md)). Desktop app reads local
-(LocalShell) **and** remote hosts (RemoteHttp, signed) with a host switcher; `bwocd` serves the
-signed read API and is deployed on anna + busaba; the iOS app builds and runs on the simulator.
-Next: enable `tailscale serve`, QR + SSO enrollment, iOS ad-hoc device build.
+🚧 **Phase 1+** — design closed (12 decisions, see [DESIGN.md](DESIGN.md)). Desktop app reads local
+(LocalShell) **and** remote hosts (RemoteHttp, signed) with a host switcher, plus remote-host CRUD
+from Settings; `bwocd` serves the signed API and is deployed on anna + busaba. Shipped since:
+**agent chat** (one-shot `bwoc run`, memory-primed), **agent CRUD** (create / retire / status),
+**device control** (SC01 Plus over USB + bwoc-ball over the xiaozhi-server bridge), and a
+capability-gated **write** path — bwocd's `POST /cli` verb proxy — so remote hosts can drive
+actions, not just read. The iOS app builds and installs OTA on registered devices over the tailnet.
+Next: enable `tailscale serve`, QR + SSO enrollment.
 
 ## Layout
 
