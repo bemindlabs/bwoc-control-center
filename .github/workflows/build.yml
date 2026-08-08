@@ -1,0 +1,115 @@
+name: build
+
+# Compile the app for every target — macOS (desktop), iOS, and Android — so a
+# broken build surfaces in CI, not at release. Builds are UNSIGNED (compile /
+# packaging verification); real distribution signing (certs, keystores) is a
+# follow-up wired via repo secrets. Runs on push to main, PRs, and manually.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── macOS desktop ──────────────────────────────────────────────────────────
+  macos:
+    name: macOS (desktop)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: Build (universal .app + .dmg)
+        run: pnpm tauri build --target universal-apple-darwin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bwoc-control-center-macos
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+          if-no-files-found: warn
+
+  # ── iOS ────────────────────────────────────────────────────────────────────
+  ios:
+    name: iOS
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      # `gen/apple` is committed; init only if missing (idempotent).
+      - name: Ensure iOS project
+        run: |
+          [ -d src-tauri/gen/apple ] || pnpm tauri ios init --ci
+      - name: Build (unsigned)
+        # debugging export = no signing identity required; verifies the Xcode
+        # build + Rust iOS compile. Device/App Store builds need signing secrets.
+        run: pnpm tauri ios build --export-method debugging
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bwoc-control-center-ios
+          path: src-tauri/gen/apple/build/**/*.ipa
+          if-no-files-found: warn
+
+  # ── Android ──────────────────────────────────────────────────────────────────
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Install NDK
+        run: sdkmanager "ndk;27.0.12077973"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: Ensure Android project
+        # gen/android isn't committed yet — init generates the Gradle project.
+        run: |
+          [ -d src-tauri/gen/android ] || pnpm tauri android init --ci
+      - name: Build (unsigned debug APK)
+        env:
+          NDK_HOME: ${{ env.ANDROID_NDK_ROOT }}
+        run: pnpm tauri android build --apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bwoc-control-center-android
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: warn
