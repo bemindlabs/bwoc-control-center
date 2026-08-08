@@ -91,6 +91,48 @@ export default function Agents({
     }
   }
 
+  // ── full-control actions (send / start / stop / broadcast / outbox) ──
+  const [result, setResult] = useState<string | null>(null);
+  const [bmsg, setBmsg] = useState(""); // broadcast message
+  const [sendTo, setSendTo] = useState<string | null>(null); // per-agent compose
+  const [smsg, setSmsg] = useState("");
+
+  async function act(
+    key: string,
+    cmd: string,
+    args: Record<string, unknown>,
+    okLabel: string,
+  ) {
+    setBusy(key);
+    setErr(null);
+    setResult(null);
+    try {
+      const out = await invoke<string>(cmd, { host, ...args });
+      const tail = out ? out.trim().split("\n").slice(-1)[0] : "";
+      setResult(tail ? `${okLabel} — ${tail}` : okLabel);
+      onChanged();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const startAgent = (id: string) => act(id, "agent_start", { agent: id }, `started ${id}`);
+  const stopAgent = (id: string) => act(id, "agent_stop", { agent: id }, `stopped ${id}`);
+  async function sendMsg(id: string) {
+    if (!smsg.trim()) return;
+    await act(id, "agent_send", { agent: id, message: smsg.trim() }, `sent to ${id}`);
+    setSmsg("");
+    setSendTo(null);
+  }
+  async function broadcast() {
+    if (!bmsg.trim()) return;
+    await act("bcast", "fleet_broadcast", { message: bmsg.trim(), team: null }, "broadcast sent");
+    setBmsg("");
+  }
+  const flushOutbox = () => act("flush", "outbox_flush", { peer: null }, "outbox flushed");
+
   const valid = name.trim() && role.trim() && model.trim();
 
   return (
@@ -165,33 +207,113 @@ export default function Agents({
       )}
 
       {err && <p className="px-1 text-xs text-destructive">{err}</p>}
+      {result && <p className="px-1 text-xs text-muted-foreground">{result}</p>}
 
-      {/* manage list — status + retire per agent */}
+      {/* fleet-wide control bar — broadcast + outbox flush */}
+      <Card className="flex items-center gap-2 p-2">
+        <input
+          value={bmsg}
+          onChange={(e) => setBmsg(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") broadcast();
+          }}
+          placeholder="broadcast a message to the whole fleet…"
+          className="min-w-0 flex-1 rounded-lg border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        <button
+          onClick={broadcast}
+          disabled={!bmsg.trim() || busy === "bcast"}
+          className="shrink-0 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-40"
+        >
+          {busy === "bcast" ? "…" : "Broadcast"}
+        </button>
+        <button
+          onClick={flushOutbox}
+          disabled={busy === "flush"}
+          className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground hover:bg-muted/40 disabled:opacity-40"
+          title="Retry spooled offline messages (bwoc outbox flush)"
+        >
+          {busy === "flush" ? "…" : "Flush outbox"}
+        </button>
+      </Card>
+
+      {/* manage list — send / start / stop / status / retire per agent */}
       <Card className="divide-y divide-border">
         {agents.length === 0 && (
           <p className="px-4 py-6 text-center text-sm text-muted-foreground">no agents</p>
         )}
         {agents.map((a) => (
-          <div key={a.id} className="flex items-center gap-2 px-3 py-2">
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-mono text-[13px]">{a.id}</span>
-              <span className="text-xs text-muted-foreground">{a.backend}</span>
-            </span>
-            <button
-              onClick={() => status(a.id)}
-              disabled={busy === a.id}
-              className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted/40"
-            >
-              status
-            </button>
-            <button
-              onClick={() => retire(a.id)}
-              disabled={busy === a.id}
-              className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-              aria-label={`retire ${a.id}`}
-            >
-              ✕
-            </button>
+          <div key={a.id} className="px-3 py-2">
+            <div className="flex items-center gap-1.5">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-mono text-[13px]">{a.id}</span>
+                <span className="text-xs text-muted-foreground">{a.backend}</span>
+              </span>
+              <button
+                onClick={() => {
+                  setSendTo((s) => (s === a.id ? null : a.id));
+                  setSmsg("");
+                }}
+                disabled={busy === a.id}
+                className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted/40"
+                title="Send a message to this agent"
+              >
+                ✉
+              </button>
+              <button
+                onClick={() => startAgent(a.id)}
+                disabled={busy === a.id}
+                className="rounded-md border border-border px-2 py-1 text-xs text-emerald-600 hover:bg-emerald-500/10"
+                title="Start this agent's daemon"
+              >
+                ▶
+              </button>
+              <button
+                onClick={() => stopAgent(a.id)}
+                disabled={busy === a.id}
+                className="rounded-md border border-border px-2 py-1 text-xs text-amber-600 hover:bg-amber-500/10"
+                title="Stop this agent's daemon"
+              >
+                ⏹
+              </button>
+              <button
+                onClick={() => status(a.id)}
+                disabled={busy === a.id}
+                className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted/40"
+              >
+                status
+              </button>
+              <button
+                onClick={() => retire(a.id)}
+                disabled={busy === a.id}
+                className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                aria-label={`retire ${a.id}`}
+              >
+                ✕
+              </button>
+            </div>
+            {sendTo === a.id && (
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  value={smsg}
+                  onChange={(e) => setSmsg(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") sendMsg(a.id);
+                    if (e.key === "Escape") setSendTo(null);
+                  }}
+                  autoFocus
+                  placeholder={`message to ${a.id}…`}
+                  className="min-w-0 flex-1 rounded-lg border border-input bg-card px-3 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                <button
+                  onClick={() => sendMsg(a.id)}
+                  disabled={!smsg.trim() || busy === a.id}
+                  className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-40"
+                >
+                  Send
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </Card>
