@@ -648,7 +648,10 @@ mod cli_tests {
             Some("write")
         );
         assert_eq!(required_cap_for(&v("outbox flush")), Some("write"));
-        assert_eq!(required_cap_for(&v("outbox flush --peer agent-x")), Some("write"));
+        assert_eq!(
+            required_cap_for(&v("outbox flush --peer agent-x")),
+            Some("write")
+        );
         assert_eq!(
             required_cap_for(&v("run agent-anna --task x")),
             Some("exec")
