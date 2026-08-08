@@ -97,6 +97,32 @@ impl LocalShell {
             .map_err(|e| format!("bwoc emitted non-JSON output: {e}"))
     }
 
+    /// Run a `bwoc` verb and return raw stdout (trimmed). For control verbs
+    /// (send / start / stop / outbox) whose human output isn't JSON. `--workspace`
+    /// is appended (a per-subcommand option). Non-zero exit → Err with stderr.
+    pub async fn bwoc_raw(&self, args: &[&str]) -> Result<String, String> {
+        let ws = self.workspace.clone();
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let out = tauri::async_runtime::spawn_blocking(move || {
+            std::process::Command::new(bwoc_bin())
+                .args(&args)
+                .arg("--workspace")
+                .arg(&ws)
+                .output()
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("cannot exec bwoc: {e} — install it or set BWOC_BIN"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "bwoc exited {}: {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
     pub async fn bwoc_version(&self) -> Option<String> {
         let out = tauri::async_runtime::spawn_blocking(|| {
             std::process::Command::new(bwoc_bin())

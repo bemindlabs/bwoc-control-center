@@ -89,6 +89,12 @@ pub fn load_or_create_controller(dir: &Path) -> Result<Controller, String> {
 /// a user hosts.toml still overrides these.
 fn default_hosts() -> Vec<HostEntry> {
     vec![
+        // Production fleet host (srv1366253, tailnet 100.94.245.64) — listed
+        // first so it is the default host the app (incl. mobile) connects to.
+        HostEntry {
+            name: "prod".into(),
+            url: "https://srv1366253.tail32ca95.ts.net:10130".into(),
+        },
         HostEntry {
             name: "anna".into(),
             url: "https://kla-macbook-spro-16.tail32ca95.ts.net:10130".into(),
