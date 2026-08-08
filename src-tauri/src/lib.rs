@@ -449,13 +449,7 @@ async fn outbox_list(
     host: Option<String>,
     workspace: Option<String>,
 ) -> Result<String, String> {
-    run_verb(
-        &app,
-        host,
-        workspace,
-        vec!["outbox".into(), "list".into()],
-    )
-    .await
+    run_verb(&app, host, workspace, vec!["outbox".into(), "list".into()]).await
 }
 
 #[tauri::command]

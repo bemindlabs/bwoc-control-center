@@ -548,11 +548,13 @@ fn required_cap_for(argv: &[String]) -> Option<&'static str> {
         ["team", "list", ..] => Some("read"),
         ["task", "list", ..] => Some("read"),
         ["memory", "list", ..] | ["memory", "show", ..] | ["memory", "search", ..] => Some("read"),
+        ["outbox", "list", ..] => Some("read"),
         // write
-        ["send", ..] => Some("write"),
+        ["send", ..] => Some("write"), // incl. broadcast (send --all / --team)
         ["task", "add", ..] | ["task", "claim", ..] | ["task", "complete", ..] => Some("write"),
-        // exec
-        ["run", ..] => Some("exec"),
+        ["outbox", "flush", ..] => Some("write"),
+        // exec — spawn/kill an agent daemon on the host
+        ["run", ..] | ["start", ..] | ["stop", ..] => Some("exec"),
         // Creation/retirement have dedicated routes; dangerous verbs and anything
         // unrecognized are refused here.
         _ => None,
@@ -632,19 +634,28 @@ mod cli_tests {
             Some("read")
         );
         assert_eq!(required_cap_for(&v("memory list --json")), Some("read"));
+        assert_eq!(required_cap_for(&v("outbox list")), Some("read"));
     }
 
     #[test]
     fn mutating_verbs_need_write_or_exec() {
         assert_eq!(required_cap_for(&v("send agent-anna hi")), Some("write"));
+        // broadcast rides the send arm.
+        assert_eq!(required_cap_for(&v("send --all hi")), Some("write"));
+        assert_eq!(required_cap_for(&v("send --team t hi")), Some("write"));
         assert_eq!(
             required_cap_for(&v("task add tianting do-x")),
             Some("write")
         );
+        assert_eq!(required_cap_for(&v("outbox flush")), Some("write"));
+        assert_eq!(required_cap_for(&v("outbox flush --peer agent-x")), Some("write"));
         assert_eq!(
             required_cap_for(&v("run agent-anna --task x")),
             Some("exec")
         );
+        // agent-daemon lifecycle spawns/kills a process on the host → exec.
+        assert_eq!(required_cap_for(&v("start agent-anna --yes")), Some("exec"));
+        assert_eq!(required_cap_for(&v("stop agent-anna")), Some("exec"));
     }
 
     #[test]
