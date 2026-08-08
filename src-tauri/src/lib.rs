@@ -316,6 +316,148 @@ fn clean_agent_output(raw: &str) -> String {
 /// Hosts the UI can switch between. Desktop lists "local" first (LocalShell
 /// against this machine's workspace); mobile omits it — there is no `bwoc` CLI
 /// or workspace in the app sandbox, so only remote hosts make sense.
+/// Run a fleet-control verb over the resolved transport: local `bwoc` for the
+/// desktop, or the signed bwocd `POST /cli` verb proxy for a remote/mobile host.
+/// Returns the command's stdout (trimmed). The remote allowlist decides which
+/// verbs a given host permits.
+async fn run_verb(
+    app: &tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+    argv: Vec<String>,
+) -> Result<String, String> {
+    match Transport::resolve(&cfg_dir(app)?, host, workspace)? {
+        Transport::Local(t) => {
+            let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+            t.bwoc_raw(&refs).await
+        }
+        Transport::Remote(r) => {
+            let v = r
+                .post_json("/cli", serde_json::json!({ "argv": argv }), 30)
+                .await?;
+            if v["ok"].as_bool() == Some(false) || v["exit_code"].as_i64().unwrap_or(0) != 0 {
+                return Err(v["stderr"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("remote cli failed")
+                    .to_string());
+            }
+            Ok(v["stdout"].as_str().unwrap_or("").trim().to_string())
+        }
+    }
+}
+
+/// Send a message to one agent's inbox (`bwoc send <agent> <message>`).
+#[tauri::command]
+async fn agent_send(
+    app: tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+    agent: String,
+    message: String,
+) -> Result<String, String> {
+    if !valid_agent_id(&agent) {
+        return Err("invalid agent id".into());
+    }
+    if message.trim().is_empty() {
+        return Err("empty message".into());
+    }
+    run_verb(&app, host, workspace, vec!["send".into(), agent, message]).await
+}
+
+/// Broadcast to the whole workspace (`--all`) or one team (`--team <t>`).
+#[tauri::command]
+async fn fleet_broadcast(
+    app: tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+    message: String,
+    team: Option<String>,
+) -> Result<String, String> {
+    if message.trim().is_empty() {
+        return Err("empty message".into());
+    }
+    let mut argv = vec!["send".into()];
+    match team {
+        Some(t) if !t.trim().is_empty() => {
+            argv.push("--team".into());
+            argv.push(t);
+        }
+        _ => argv.push("--all".into()),
+    }
+    argv.push(message);
+    run_verb(&app, host, workspace, argv).await
+}
+
+/// Start an agent's daemon (`bwoc start <agent>`).
+#[tauri::command]
+async fn agent_start(
+    app: tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+    agent: String,
+) -> Result<String, String> {
+    if !valid_agent_id(&agent) {
+        return Err("invalid agent id".into());
+    }
+    run_verb(
+        &app,
+        host,
+        workspace,
+        vec!["start".into(), agent, "--yes".into()],
+    )
+    .await
+}
+
+/// Stop an agent's daemon (`bwoc stop <agent>`).
+#[tauri::command]
+async fn agent_stop(
+    app: tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+    agent: String,
+) -> Result<String, String> {
+    if !valid_agent_id(&agent) {
+        return Err("invalid agent id".into());
+    }
+    run_verb(&app, host, workspace, vec!["stop".into(), agent]).await
+}
+
+/// Retry spooled outbox messages (`bwoc outbox flush [--peer <id>]`).
+#[tauri::command]
+async fn outbox_flush(
+    app: tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+    peer: Option<String>,
+) -> Result<String, String> {
+    let mut argv = vec!["outbox".into(), "flush".into()];
+    if let Some(p) = peer.filter(|p| !p.trim().is_empty()) {
+        if !valid_agent_id(&p) {
+            return Err("invalid peer id".into());
+        }
+        argv.push("--peer".into());
+        argv.push(p);
+    }
+    run_verb(&app, host, workspace, argv).await
+}
+
+/// Pending durable-retry messages per peer (`bwoc outbox list`).
+#[tauri::command]
+async fn outbox_list(
+    app: tauri::AppHandle,
+    host: Option<String>,
+    workspace: Option<String>,
+) -> Result<String, String> {
+    run_verb(
+        &app,
+        host,
+        workspace,
+        vec!["outbox".into(), "list".into()],
+    )
+    .await
+}
+
 #[tauri::command]
 fn list_hosts(app: tauri::AppHandle) -> Result<Vec<HostListEntry>, String> {
     let mut out = Vec::new();
@@ -380,6 +522,12 @@ pub fn run() {
             list_hosts,
             controller_info,
             chat_send,
+            agent_send,
+            fleet_broadcast,
+            agent_start,
+            agent_stop,
+            outbox_flush,
+            outbox_list,
             add_host,
             remove_host,
             device::usb_list_ports,
