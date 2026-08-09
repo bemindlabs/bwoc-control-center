@@ -561,10 +561,10 @@ fn upstream_error(e: String) -> Response {
 #[derive(serde::Deserialize)]
 struct CliBody {
     argv: Vec<String>,
-    /// Reserved: long verbs (`run`) carry their own `--timeout` in `argv`;
-    /// bwocd does not impose a separate server-side bound here.
+    /// Optional per-call server-side ceiling (seconds). Clamped to [5, 600] and
+    /// enforced by bwocd (the child is killed on overrun) so an exec verb can't
+    /// run unbounded. Defaults to 120s when omitted.
     #[serde(default)]
-    #[allow(dead_code)]
     timeout_secs: Option<u64>,
 }
 
@@ -637,7 +637,8 @@ async fn cli(
         body.argv.join(" "),
         caller.id
     );
-    match bwoc_exec(&state.workspace, &body.argv).await {
+    let timeout = body.timeout_secs.unwrap_or(120).clamp(5, 600);
+    match bwoc_exec(&state.workspace, &body.argv, timeout).await {
         Ok(out) => Json(serde_json::json!({
             "ok": out.exit_code == 0,
             "exit_code": out.exit_code,
