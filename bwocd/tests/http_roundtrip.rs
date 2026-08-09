@@ -19,7 +19,7 @@ fn state() -> Arc<AppState> {
     }])
     .unwrap();
     Arc::new(AppState {
-        workspace: std::env::temp_dir(),
+        workspaces: bwocd::workspaces::Workspaces::single(std::env::temp_dir()),
         registry,
         nonces: auth::NonceStore::default(),
         cors_origin: None,
@@ -36,7 +36,7 @@ fn state_with_cors(origin: &str, scope: &str) -> Arc<AppState> {
     }])
     .unwrap();
     Arc::new(AppState {
-        workspace: std::env::temp_dir(),
+        workspaces: bwocd::workspaces::Workspaces::single(std::env::temp_dir()),
         registry,
         nonces: auth::NonceStore::default(),
         cors_origin: Some(origin.into()),
@@ -54,7 +54,7 @@ fn state_capped(max: usize) -> Arc<AppState> {
     }])
     .unwrap();
     Arc::new(AppState {
-        workspace: std::env::temp_dir(),
+        workspaces: bwocd::workspaces::Workspaces::single(std::env::temp_dir()),
         registry,
         nonces: auth::NonceStore::default(),
         cors_origin: None,

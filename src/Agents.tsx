@@ -118,11 +118,18 @@ export default function Agents({
     }
   }
 
-  const startAgent = (id: string) => act(id, "agent_start", { agent: id }, `started ${id}`);
-  const stopAgent = (id: string) => act(id, "agent_stop", { agent: id }, `stopped ${id}`);
+  // Which workspace an agent lives in (multi-workspace hosts tag each agent).
+  // Forwarded so the /cli verb runs against that agent's own workspace, not the
+  // host's primary. `null` (single-workspace host) → bwocd uses the primary.
+  const wsOf = (id: string) => agents.find((a) => a.id === id)?.workspace ?? null;
+
+  const startAgent = (id: string) =>
+    act(id, "agent_start", { agent: id, workspace: wsOf(id) }, `started ${id}`);
+  const stopAgent = (id: string) =>
+    act(id, "agent_stop", { agent: id, workspace: wsOf(id) }, `stopped ${id}`);
   async function sendMsg(id: string) {
     if (!smsg.trim()) return;
-    await act(id, "agent_send", { agent: id, message: smsg.trim() }, `sent to ${id}`);
+    await act(id, "agent_send", { agent: id, message: smsg.trim(), workspace: wsOf(id) }, `sent to ${id}`);
     setSmsg("");
     setSendTo(null);
   }

@@ -184,7 +184,7 @@ async fn enroll(State(state): State<Arc<AppState>>, req: Request) -> Response {
         now.timestamp(),
     ) {
         Ok(()) => match crate::enroll::record(
-            &state.workspace,
+            &state.workspaces.primary,
             &parsed.id,
             &parsed.public_key,
             &now.to_rfc3339(),
@@ -304,24 +304,55 @@ async fn hosts(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "unknown".into());
+    let discovered = state.workspaces.discover();
     Json(serde_json::json!({
         "hostname": hostname,
-        "workspace": state.workspace.display().to_string(),
+        "workspace": state.workspaces.primary.display().to_string(),
+        "workspaces": discovered.iter().map(|w| &w.name).collect::<Vec<_>>(),
+        "multi_workspace": state.workspaces.is_multi(),
         "bwocd_version": env!("CARGO_PKG_VERSION"),
     }))
 }
 
 async fn fleet(State(state): State<Arc<AppState>>) -> Response {
-    // `bwoc list --json` returns `{"agents": [...]}` — unwrap to the array.
-    let agents = match bwoc_json(&state.workspace, &["list"]).await {
-        Ok(mut v) => v["agents"].take(),
-        Err(e) => return upstream_error(e),
-    };
-    let health = bwoc_json(&state.workspace, &["fleet", "health"])
+    // Aggregate `bwoc list` across every discovered workspace, tagging each agent
+    // with its `workspace` (name) so the client can group them. A single failing
+    // workspace is skipped (not fatal) so one broken registry can't blank the
+    // whole fleet. In single-workspace mode this is just the one list.
+    let discovered = state.workspaces.discover();
+    let mut agents: Vec<serde_json::Value> = Vec::new();
+    let mut any_ok = false;
+    for ws in &discovered {
+        match bwoc_json(&ws.path, &["list"]).await {
+            Ok(mut v) => {
+                any_ok = true;
+                if let serde_json::Value::Array(items) = v["agents"].take() {
+                    for mut a in items {
+                        if let serde_json::Value::Object(map) = &mut a {
+                            map.insert(
+                                "workspace".into(),
+                                serde_json::Value::String(ws.name.clone()),
+                            );
+                        }
+                        agents.push(a);
+                    }
+                }
+            }
+            Err(e) => eprintln!("bwocd: fleet: skipping workspace {}: {e}", ws.name),
+        }
+    }
+    // Only error out if EVERY workspace failed (nothing to show and a real fault).
+    if !any_ok && !discovered.is_empty() {
+        return upstream_error("all workspaces failed to list".into());
+    }
+    // Health stays a primary-workspace read — running `fleet health` per workspace
+    // would be N heavy sweeps; the client's fleet view keys off the agent list.
+    let health = bwoc_json(&state.workspaces.primary, &["fleet", "health"])
         .await
         .unwrap_or(serde_json::Value::Null);
     Json(serde_json::json!({
-        "workspace": state.workspace.display().to_string(),
+        "workspace": state.workspaces.primary.display().to_string(),
+        "workspaces": discovered.iter().map(|w| &w.name).collect::<Vec<_>>(),
         "agents": agents,
         "health": health,
     }))
@@ -332,7 +363,10 @@ async fn agent(State(state): State<Arc<AppState>>, AxPath(id): AxPath<String>) -
     if !valid_agent_id(&id) {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    match bwoc_json(&state.workspace, &["list"]).await {
+    let Some(ws) = state.workspaces.for_agent(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match bwoc_json(&ws, &["list"]).await {
         Ok(mut v) => match v["agents"].take() {
             serde_json::Value::Array(items) => {
                 match items.into_iter().find(|a| a["id"] == id.as_str()) {
@@ -355,6 +389,10 @@ struct CreateBody {
     primary_model: String,
     #[serde(default)]
     scope: Option<String>,
+    /// Target workspace by name (from the discovered set). Omit → primary. In
+    /// single-workspace mode this is ignored.
+    #[serde(default)]
+    workspace: Option<String>,
 }
 
 /// Reject with 403 when `caller` lacks `cap` (`read` is implicit). Mirrors the
@@ -439,8 +477,17 @@ async fn agent_create(
         args.push("--scope");
         args.push(s);
     }
+    // Resolve the target workspace by name (from the discovered set) — never an
+    // arbitrary path. Unknown name → 400; omitted → primary.
+    let ws = match body.workspace.as_deref() {
+        Some(name) => match state.workspaces.by_name(name) {
+            Some(p) => p,
+            None => return (StatusCode::BAD_REQUEST, "unknown workspace").into_response(),
+        },
+        None => state.workspaces.primary.clone(),
+    };
     eprintln!("bwocd: CREATE agent-{name} backend={}", body.backend);
-    match bwoc_json(&state.workspace, &args).await {
+    match bwoc_json(&ws, &args).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => upstream_error(e),
     }
@@ -460,8 +507,11 @@ async fn agent_retire(
     if !valid_agent_id(&id) {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    let Some(ws) = state.workspaces.for_agent(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     eprintln!("bwocd: RETIRE {id} by {}", caller.id);
-    match bwoc_json(&state.workspace, &["retire", &id, "--yes"]).await {
+    match bwoc_json(&ws, &["retire", &id, "--yes"]).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => upstream_error(e),
     }
@@ -472,7 +522,10 @@ async fn agent_status(State(state): State<Arc<AppState>>, AxPath(id): AxPath<Str
     if !valid_agent_id(&id) {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    match bwoc_json(&state.workspace, &["status", &id]).await {
+    let Some(ws) = state.workspaces.for_agent(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match bwoc_json(&ws, &["status", &id]).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => upstream_error(e),
     }
@@ -482,7 +535,10 @@ async fn agent_inbox(State(state): State<Arc<AppState>>, AxPath(id): AxPath<Stri
     if !valid_agent_id(&id) {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    match bwoc_json(&state.workspace, &["inbox", &id]).await {
+    let Some(ws) = state.workspaces.for_agent(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match bwoc_json(&ws, &["inbox", &id]).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => upstream_error(e),
     }
@@ -514,10 +570,13 @@ async fn chat(
     if body.prompt.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "empty prompt").into_response();
     }
+    let Some(ws) = state.workspaces.for_agent(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let timeout = body.timeout.unwrap_or(120).clamp(5, 600).to_string();
     // Incarnate fully: persona (AGENTS.md) is loaded by `bwoc run`; prepend the
     // agent's saved memory so the turn has its prior context too.
-    let task = match crate::agentmem::load(&state.workspace, &id) {
+    let task = match crate::agentmem::load(&ws, &id) {
         Some(mem) => format!(
             "# Your saved memory — consult this before replying\n\n{mem}\n\n---\n\n{}",
             body.prompt
@@ -533,12 +592,7 @@ async fn chat(
             "none"
         }
     );
-    match bwoc_json(
-        &state.workspace,
-        &["run", &id, "--task", &task, "--timeout", &timeout],
-    )
-    .await
-    {
+    match bwoc_json(&ws, &["run", &id, "--task", &task, "--timeout", &timeout]).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => upstream_error(e),
     }
@@ -594,6 +648,11 @@ struct CliBody {
     /// run unbounded. Defaults to 120s when omitted.
     #[serde(default)]
     timeout_secs: Option<u64>,
+    /// Target workspace by name (from the discovered set). Omit → primary. Lets a
+    /// multi-workspace client run a verb (send/run/start/…) against the agent's
+    /// own workspace. Resolved by name only — never an arbitrary path.
+    #[serde(default)]
+    workspace: Option<String>,
 }
 
 /// The capability a `/cli` verb requires, or `None` if the verb is not proxied.
@@ -665,8 +724,17 @@ async fn cli(
         body.argv.join(" "),
         caller.id
     );
+    // Resolve the target workspace by name (validated against the discovered set)
+    // — unknown name → 400, never an arbitrary path.
+    let ws = match body.workspace.as_deref() {
+        Some(name) => match state.workspaces.by_name(name) {
+            Some(p) => p,
+            None => return (StatusCode::BAD_REQUEST, "unknown workspace").into_response(),
+        },
+        None => state.workspaces.primary.clone(),
+    };
     let timeout = body.timeout_secs.unwrap_or(120).clamp(5, 600);
-    match bwoc_exec(&state.workspace, &body.argv, timeout).await {
+    match bwoc_exec(&ws, &body.argv, timeout).await {
         Ok(out) => Json(serde_json::json!({
             "ok": out.exit_code == 0,
             "exit_code": out.exit_code,

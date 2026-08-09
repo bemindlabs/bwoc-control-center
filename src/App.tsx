@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentEntry,
@@ -63,6 +63,22 @@ function AgentRow({ a, onOpen }: { a: AgentEntry; onOpen: (id: string) => void }
       </td>
     </tr>
   );
+}
+
+/** Group agents by their `workspace` tag (present when the host serves multiple
+ *  workspaces). Returns `[name, agents][]` sorted by name. When no agent carries
+ *  a workspace (single-workspace host) returns one unlabeled group so the table
+ *  renders flat, exactly as before. */
+function groupByWorkspace(
+  agents: AgentEntry[],
+): [string | undefined, AgentEntry[]][] {
+  if (!agents.some((a) => a.workspace)) return [[undefined, agents]];
+  const groups = new Map<string, AgentEntry[]>();
+  for (const a of agents) {
+    const ws = a.workspace ?? "(unknown)";
+    (groups.get(ws) ?? groups.set(ws, []).get(ws)!).push(a);
+  }
+  return [...groups.entries()].sort(([x], [y]) => x.localeCompare(y));
 }
 
 function healthColor(status: string): string {
@@ -287,8 +303,22 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {agents.map((a) => (
-                  <AgentRow key={a.id} a={a} onOpen={setChatAgent} />
+                {groupByWorkspace(agents).map(([ws, rows]) => (
+                  <Fragment key={ws ?? "_all"}>
+                    {ws && (
+                      <tr className="bg-muted/30">
+                        <td
+                          colSpan={4}
+                          className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground sm:px-4"
+                        >
+                          {ws} · {rows.length} agent{rows.length === 1 ? "" : "s"}
+                        </td>
+                      </tr>
+                    )}
+                    {rows.map((a) => (
+                      <AgentRow key={a.id} a={a} onOpen={setChatAgent} />
+                    ))}
+                  </Fragment>
                 ))}
                 {agents.length === 0 && (
                   <tr>

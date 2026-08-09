@@ -24,9 +24,18 @@ struct Args {
     #[arg(long, default_value = "127.0.0.1:10130")]
     bind: SocketAddr,
 
-    /// BWOC workspace this daemon serves.
+    /// BWOC workspace this daemon serves (the primary — holds the enroll/pending
+    /// store; also the sole workspace unless `--workspace-root` is set).
     #[arg(long, env = "BWOC_WORKSPACE")]
     workspace: PathBuf,
+
+    /// Serve EVERY workspace under this root, not just `--workspace`. bwocd scans
+    /// the root's direct children for `.bwoc/workspace.toml` on each request
+    /// (dynamic — new workspaces appear without a restart). Agents from all of
+    /// them show in `/fleet`, tagged with their workspace; targeted ops resolve
+    /// the agent's own workspace.
+    #[arg(long, env = "BWOCD_WORKSPACE_ROOT")]
+    workspace_root: Option<PathBuf>,
 
     /// Controller registry (TOML). Default: <workspace>/.bwoc/bwocd/controllers.toml
     #[arg(long)]
@@ -84,8 +93,27 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("bwocd: CORS allow-origin = {o}");
     }
 
+    let workspaces = match args.workspace_root {
+        Some(root) => {
+            anyhow::ensure!(
+                root.is_dir(),
+                "workspace-root not found: {}",
+                root.display()
+            );
+            let ws = bwocd::workspaces::Workspaces::rooted(root, args.workspace);
+            let n = ws.discover().len();
+            eprintln!(
+                "bwocd: multi-workspace mode — {} workspace(s) under {}",
+                n,
+                ws.root.as_ref().unwrap().display()
+            );
+            ws
+        }
+        None => bwocd::workspaces::Workspaces::single(args.workspace),
+    };
+
     let state = Arc::new(AppState {
-        workspace: args.workspace,
+        workspaces,
         registry,
         nonces: auth::NonceStore::default(),
         cors_origin,
