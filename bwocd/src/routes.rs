@@ -200,7 +200,18 @@ async fn enroll(State(state): State<Arc<AppState>>, req: Request) -> Response {
                 )
                     .into_response()
             }
-            Err(e) => {
+            Err(crate::enroll::RecordError::Full) => {
+                eprintln!("bwocd: ENROLL refused {sender:?} — pending queue full");
+                (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "enrollment queue full — contact the operator",
+                )
+                    .into_response()
+            }
+            Err(crate::enroll::RecordError::InvalidId) => {
+                (StatusCode::BAD_REQUEST, "invalid controller id").into_response()
+            }
+            Err(crate::enroll::RecordError::Io(e)) => {
                 eprintln!("bwocd: enroll record error: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
             }
