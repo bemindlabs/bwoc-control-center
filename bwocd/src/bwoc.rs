@@ -7,7 +7,7 @@
 //! (`kill_on_drop`) so its pipes close and the task returns an error.
 
 use std::path::Path;
-use std::process::Output;
+use std::process::{Output, Stdio};
 use std::time::Duration;
 use tokio::process::Command;
 
@@ -17,7 +17,15 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Spawn `cmd` and await its output under `timeout`; kill the child if it
 /// overruns (kill_on_drop → dropping the timed-out future terminates it).
 async fn run(mut cmd: Command, timeout: Duration, label: &str) -> Result<Output, String> {
-    cmd.kill_on_drop(true);
+    // MUST pipe stdout/stderr: unlike `std::process::Command::output()`,
+    // `tokio::process::Command::spawn()` + `wait_with_output()` does NOT capture
+    // by default — the child inherits the parent's fds and `wait_with_output`
+    // returns EMPTY. Without this, every `bwoc --json` came back as "" → an "EOF
+    // non-JSON" error while the real JSON leaked to bwocd's own stdout/log.
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
     let child = cmd.spawn().map_err(|e| format!("cannot exec bwoc: {e}"))?;
     match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Ok(Ok(out)) => Ok(out),
@@ -77,4 +85,25 @@ pub async fn bwoc_exec(
         stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
         exit_code: out.status.code().unwrap_or(-1),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression guard for the piped-stdio fix: `run` MUST capture a child's
+    /// stdout. (Before the fix, tokio's `spawn()` inherited the parent's fds and
+    /// `wait_with_output()` returned empty, so every `bwoc --json` failed.)
+    #[tokio::test]
+    async fn run_captures_child_stdout() {
+        let mut cmd = Command::new("echo");
+        cmd.arg("hello-from-child");
+        let out = run(cmd, Duration::from_secs(5), "test").await.unwrap();
+        assert!(out.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "hello-from-child",
+            "stdout must be captured, not inherited"
+        );
+    }
 }
