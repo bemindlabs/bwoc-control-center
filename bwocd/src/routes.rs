@@ -45,7 +45,24 @@ pub fn router(state: Arc<AppState>) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             verify_signed_request,
-        ));
+        ))
+        // DoS bound: cap concurrent in-flight signed requests → cap concurrent
+        // `bwoc` spawns. Outer-most on the signed stack, so a flood is shed
+        // (503) *before* the crypto of signature verification runs. The permit
+        // is held for the whole request incl. the subprocess, so N slow `bwoc
+        // run`s in flight shed the N+1th. `HandleErrorLayer` maps load-shed's
+        // `Overloaded` (a `BoxError`) into a 503 so axum's error type stays
+        // `Infallible`.
+        .layer(
+            tower::ServiceBuilder::new()
+                .layer(axum::error_handling::HandleErrorLayer::new(
+                    |_: axum::BoxError| async { StatusCode::SERVICE_UNAVAILABLE },
+                ))
+                .layer(tower::load_shed::LoadShedLayer::new())
+                .layer(tower::limit::GlobalConcurrencyLimitLayer::new(
+                    state.max_concurrency,
+                )),
+        );
 
     let app = Router::new()
         .route(
