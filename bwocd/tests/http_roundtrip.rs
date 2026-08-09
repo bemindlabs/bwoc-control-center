@@ -4,7 +4,7 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use bwocd::{auth, AppState};
+use bwocd::{auth, AppState, DEFAULT_MAX_CONCURRENCY};
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -23,6 +23,7 @@ fn state() -> Arc<AppState> {
         registry,
         nonces: auth::NonceStore::default(),
         cors_origin: None,
+        max_concurrency: DEFAULT_MAX_CONCURRENCY,
     })
 }
 
@@ -39,6 +40,25 @@ fn state_with_cors(origin: &str, scope: &str) -> Arc<AppState> {
         registry,
         nonces: auth::NonceStore::default(),
         cors_origin: Some(origin.into()),
+        max_concurrency: DEFAULT_MAX_CONCURRENCY,
+    })
+}
+
+/// State with a specific concurrency ceiling, for the load-shed test.
+fn state_capped(max: usize) -> Arc<AppState> {
+    let seed_hex = hex::encode(SEED);
+    let registry = auth::ControllerRegistry::from_entries(vec![auth::ControllerEntry {
+        id: "ctrl-test".into(),
+        public_key: cc_signing::public_key_hex(&seed_hex).unwrap(),
+        scope: "read".into(),
+    }])
+    .unwrap();
+    Arc::new(AppState {
+        workspace: std::env::temp_dir(),
+        registry,
+        nonces: auth::NonceStore::default(),
+        cors_origin: None,
+        max_concurrency: max,
     })
 }
 
@@ -128,6 +148,27 @@ async fn no_cors_headers_when_origin_unset() {
     let res = app.oneshot(signed_request("/hosts")).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert!(res.headers().get("access-control-allow-origin").is_none());
+}
+
+#[tokio::test]
+async fn signed_requests_are_load_shed_at_the_concurrency_ceiling() {
+    // A 0-permit ceiling sheds every signed request with 503 (not 500), proving
+    // the load-shed + concurrency-limit stack is wired onto the signed surface.
+    let app = bwocd::routes::router(state_capped(0));
+    let res = app.oneshot(signed_request("/hosts")).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn health_is_exempt_from_the_concurrency_ceiling() {
+    // Liveness must always answer — the gate is scoped to the signed sub-router,
+    // so even a fully-shed daemon reports healthy.
+    let app = bwocd::routes::router(state_capped(0));
+    let res = app
+        .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
 }
 
 #[tokio::test]

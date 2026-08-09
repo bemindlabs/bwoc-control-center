@@ -41,6 +41,11 @@ struct Args {
     /// `--http-insecure` posture — never use against a shared workspace.
     #[arg(long)]
     insecure_cors: bool,
+
+    /// Max concurrent in-flight signed requests (bounds concurrent `bwoc`
+    /// spawns). Excess is shed with 503. Raise for a larger fleet.
+    #[arg(long, env = "BWOCD_MAX_CONCURRENCY", default_value_t = bwocd::DEFAULT_MAX_CONCURRENCY)]
+    max_concurrency: usize,
 }
 
 #[tokio::main]
@@ -84,7 +89,12 @@ async fn main() -> anyhow::Result<()> {
         registry,
         nonces: auth::NonceStore::default(),
         cors_origin,
+        max_concurrency: args.max_concurrency,
     });
+    eprintln!(
+        "bwocd: max concurrency {} signed request(s)",
+        args.max_concurrency
+    );
 
     let app = routes::router(state);
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
