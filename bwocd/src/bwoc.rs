@@ -33,7 +33,10 @@ pub async fn bwoc_json(workspace: &Path, args: &[&str]) -> Result<serde_json::Va
     let mut cmd = Command::new("bwoc");
     // `--workspace` is a per-subcommand option, not a global one — it must
     // come after the subcommand words.
-    cmd.args(args).arg("--workspace").arg(workspace).arg("--json");
+    cmd.args(args)
+        .arg("--workspace")
+        .arg(workspace)
+        .arg("--json");
     let out = run(cmd, READ_TIMEOUT, "json").await?;
     if !out.status.success() {
         return Err(format!(
