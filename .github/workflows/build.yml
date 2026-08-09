@@ -43,9 +43,14 @@ jobs:
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
           if-no-files-found: warn
 
-  # ── iOS ────────────────────────────────────────────────────────────────────
+  # ── iOS (compile check) ──────────────────────────────────────────────────────
+  # A full `tauri ios build` runs xcodebuild against `-sdk iphoneos`, which needs
+  # a signing team/provisioning even with -allowProvisioningUpdates — impossible
+  # unsigned in CI (it fails "Unable to load workspace"/code 74). So verify the
+  # iOS *compile* (the part that breaks on code changes) via the Rust iOS target.
+  # A signed device/App Store build (certs + xcodebuild archive) is a follow-up.
   ios:
-    name: iOS
+    name: iOS (compile check)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -56,24 +61,16 @@ jobs:
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+          targets: aarch64-apple-ios
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
-      # `gen/apple` is committed; init only if missing (idempotent).
-      - name: Ensure iOS project
-        run: |
-          [ -d src-tauri/gen/apple ] || pnpm tauri ios init --ci
-      - name: Build (unsigned)
-        # debugging export = no signing identity required; verifies the Xcode
-        # build + Rust iOS compile. Device/App Store builds need signing secrets.
-        run: pnpm tauri ios build --export-method debugging
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bwoc-control-center-ios
-          path: src-tauri/gen/apple/build/**/*.ipa
-          if-no-files-found: warn
+      - name: Build frontend (dist/ for the Rust build)
+        run: pnpm build
+      - name: Compile Rust for iOS (aarch64-apple-ios)
+        working-directory: src-tauri
+        run: cargo build --lib --target aarch64-apple-ios
 
   # ── Android ──────────────────────────────────────────────────────────────────
   android:
