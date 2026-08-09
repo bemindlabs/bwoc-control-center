@@ -326,15 +326,22 @@ async fn run_verb(
     workspace: Option<String>,
     argv: Vec<String>,
 ) -> Result<String, String> {
+    // For a remote (multi-workspace) host the workspace is a *name* forwarded to
+    // bwocd's `/cli`, which resolves it against its discovered set; for Local it's
+    // the workspace path consumed by `Transport::resolve`. Keep a copy for the
+    // remote body before `resolve` takes ownership.
+    let ws_name = workspace.clone();
     match Transport::resolve(&cfg_dir(app)?, host, workspace)? {
         Transport::Local(t) => {
             let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
             t.bwoc_raw(&refs).await
         }
         Transport::Remote(r) => {
-            let v = r
-                .post_json("/cli", serde_json::json!({ "argv": argv }), 30)
-                .await?;
+            let mut body = serde_json::json!({ "argv": argv });
+            if let Some(ws) = ws_name.filter(|s| !s.is_empty() && s != "local") {
+                body["workspace"] = serde_json::Value::String(ws);
+            }
+            let v = r.post_json("/cli", body, 30).await?;
             if v["ok"].as_bool() == Some(false) || v["exit_code"].as_i64().unwrap_or(0) != 0 {
                 return Err(v["stderr"]
                     .as_str()

@@ -6,11 +6,14 @@ pub mod auth;
 pub mod bwoc;
 pub mod enroll;
 pub mod routes;
-
-use std::path::PathBuf;
+pub mod workspaces;
 
 pub struct AppState {
-    pub workspace: PathBuf,
+    /// Workspace resolver: single (`--workspace`) or rooted multi-workspace
+    /// (`--workspace-root`, discovered dynamically). Replaces the old single
+    /// `workspace` path — use `workspaces.primary` for the enroll/pending store
+    /// and `workspaces.for_agent(id)` / `by_name(name)` for targeted ops.
+    pub workspaces: workspaces::Workspaces,
     pub registry: auth::ControllerRegistry,
     pub nonces: auth::NonceStore,
     /// CORS allow-origin for browser clients (the chrome extension). `None`

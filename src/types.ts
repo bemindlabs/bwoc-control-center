@@ -7,6 +7,9 @@ export type AgentEntry = {
   running?: boolean;
   inbox_count?: number;
   uptime_seconds?: number | null;
+  /** Workspace name this agent belongs to. Present when the host serves multiple
+   *  workspaces (bwocd `--workspace-root`); undefined for a single-workspace host. */
+  workspace?: string;
 };
 
 /** One Aparihāniya health condition from `bwoc fleet health --json`. */
