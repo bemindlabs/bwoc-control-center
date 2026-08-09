@@ -29,15 +29,16 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/whoami", get(whoami))
         .route("/hosts", get(hosts))
         .route("/fleet", get(fleet))
-        // CRUD: create (POST), read one (GET), retire (DELETE). All mutating
-        // ops shell the same `bwoc` CLI the read paths use; any enrolled
-        // controller may call them (no per-route scope gate yet).
+        // CRUD: create (POST, `write` cap), read one (GET), retire (DELETE,
+        // `dangerous` cap). Mutating ops shell the same `bwoc` CLI the read
+        // paths use and are capability-gated via `require_cap`, matching the
+        // `/cli` tiering (so they can't be used to bypass it).
         .route("/agents", post(agent_create))
         .route("/agents/{id}", get(agent).delete(agent_retire))
         .route("/agents/{id}/status", get(agent_status))
         .route("/agents/{id}/inbox", get(agent_inbox))
-        // chat = one-shot `bwoc run`; spawns the agent backend (costs tokens).
-        // Reachable by any enrolled controller (no per-route scope gate yet).
+        // chat = one-shot `bwoc run`; spawns the agent backend (costs tokens) →
+        // `exec` cap, same as `run` over /cli.
         .route("/agents/{id}/chat", post(chat))
         // /cli = capability-gated generic verb proxy (allowlist + per-verb cap).
         .route("/cli", post(cli))
@@ -328,13 +329,35 @@ struct CreateBody {
     scope: Option<String>,
 }
 
+/// Reject with 403 when `caller` lacks `cap` (`read` is implicit). Mirrors the
+/// `/cli` capability gate so the dedicated mutating routes enforce the SAME
+/// tiering — otherwise a read-only controller reaches exec/dangerous ops (create
+/// / retire / run) that `/cli` refuses.
+fn require_cap(caller: &auth::Caller, cap: &str) -> Option<Response> {
+    if cap == "read" || caller.caps.iter().any(|c| c == cap) {
+        None
+    } else {
+        Some(
+            (
+                StatusCode::FORBIDDEN,
+                format!("this route needs the `{cap}` capability"),
+            )
+                .into_response(),
+        )
+    }
+}
+
 /// Create an agent: `bwoc new <name> --json --backend … --role … --primary-model
 /// … --target agents/agent-<name>`. The template auto-resolves (CLI ships an
 /// embedded fallback). Mutating + slow-ish (incarnation writes files).
 async fn agent_create(
     State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<auth::Caller>,
     Json(body): Json<CreateBody>,
 ) -> Response {
+    if let Some(r) = require_cap(&caller, "write") {
+        return r;
+    }
     let name = body.name.trim();
     if !valid_agent_name(name) {
         return (
@@ -397,11 +420,19 @@ async fn agent_create(
 
 /// Retire an agent: `bwoc retire <id> --yes --json` (removes registry entry +
 /// files). Destructive — `--yes` bypasses the CLI's confirm prompt.
-async fn agent_retire(State(state): State<Arc<AppState>>, AxPath(id): AxPath<String>) -> Response {
+async fn agent_retire(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<auth::Caller>,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    // Destructive (removes registry entry + files) → `dangerous` cap.
+    if let Some(r) = require_cap(&caller, "dangerous") {
+        return r;
+    }
     if !valid_agent_id(&id) {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    eprintln!("bwocd: RETIRE {id}");
+    eprintln!("bwocd: RETIRE {id} by {}", caller.id);
     match bwoc_json(&state.workspace, &["retire", &id, "--yes"]).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => upstream_error(e),
@@ -440,9 +471,15 @@ struct ChatBody {
 /// agent thinks, then returns its `{output, duration_ms, …}`.
 async fn chat(
     State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<auth::Caller>,
     AxPath(id): AxPath<String>,
     Json(body): Json<ChatBody>,
 ) -> Response {
+    // `bwoc run` spawns an LLM agent turn (spends tokens) → `exec` cap, same as
+    // `run` over /cli.
+    if let Some(r) = require_cap(&caller, "exec") {
+        return r;
+    }
     if !valid_agent_id(&id) {
         return StatusCode::BAD_REQUEST.into_response();
     }
@@ -615,7 +652,32 @@ async fn cli(
 
 #[cfg(test)]
 mod cli_tests {
-    use super::{arg_is_forbidden, required_cap_for};
+    use super::{arg_is_forbidden, require_cap, required_cap_for};
+    use crate::auth::Caller;
+
+    fn caller(caps: &[&str]) -> Caller {
+        Caller {
+            id: "ctrl-1".into(),
+            caps: caps.iter().copied().map(String::from).collect(),
+        }
+    }
+
+    #[test]
+    fn require_cap_enforces_tiering_for_mutating_routes() {
+        // require_cap returns Some(rejection) when denied, None when allowed.
+        let ro = caller(&["read"]);
+        // read-only controller is refused the mutating-route caps (the A1 gap).
+        assert!(require_cap(&ro, "write").is_some());
+        assert!(require_cap(&ro, "exec").is_some()); // e.g. /chat = bwoc run
+        assert!(require_cap(&ro, "dangerous").is_some()); // e.g. DELETE /agents
+                                                          // read is implicit for everyone.
+        assert!(require_cap(&ro, "read").is_none());
+        // granted caps pass; a lower grant doesn't imply a higher one.
+        assert!(require_cap(&caller(&["read", "write"]), "write").is_none());
+        assert!(require_cap(&caller(&["read", "write"]), "dangerous").is_some());
+        assert!(require_cap(&caller(&["read", "exec"]), "exec").is_none());
+        assert!(require_cap(&caller(&["read", "dangerous"]), "dangerous").is_none());
+    }
 
     fn v(s: &str) -> Vec<String> {
         s.split_whitespace().map(str::to_string).collect()
