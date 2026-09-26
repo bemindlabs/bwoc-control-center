@@ -77,6 +77,15 @@ jobs:
     name: Android
     runs-on: ubuntu-latest
     steps:
+      # A universal debug APK for four ABIs outgrows the runner's free disk
+      # ("No space left on device" in :app:packageUniversalDebug). Drop
+      # toolchains this job never uses before the NDK/Gradle build starts.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY/CodeQL"
+          df -h /
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -87,7 +96,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - name: Install NDK
         run: sdkmanager "ndk;27.0.12077973"
       - uses: dtolnay/rust-toolchain@stable
