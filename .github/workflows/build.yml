@@ -84,7 +84,7 @@ jobs:
         run: |
           df -h /
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift \
-            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY/CodeQL"
+            /usr/local/share/boost "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}/CodeQL"
           df -h /
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
