@@ -89,7 +89,7 @@ Frontend เรียก IPC command เดียว เช่น `fleet_snapsho
 
 ### `bwocd` — control daemon (โปรเจกต์ย่อยใหม่, Rust/axum)
 - **ห่อ CLI ไม่ reinvent** — ทุก endpoint = shell `bwoc <cmd> --json` (+ อ่าน workspace files ที่ CLI ไม่ครอบคลุม). Logic ความถูกต้องอยู่ที่ CLI ตัวเดียว
-- **Infra policy 2026-06-10:** bind `127.0.0.1:10130`, เปิดผ่าน `tailscale serve` HTTPS, **ไม่เปิดพอร์ต public** (เข้าทาง tailnet hostname `bemindlabs.tail32ca95.ts.net` / Mac hostname)
+- **Infra policy 2026-06-10:** bind `127.0.0.1:10130`, เปิดผ่าน `tailscale serve` HTTPS, **ไม่เปิดพอร์ต public** (เข้าทาง tailnet hostname `<host>.<tailnet>.ts.net` / Mac hostname)
 - รันเป็น service ต่อ host (launchd บน Mac, systemd บน bemind)
 - *ทางเลือก future:* ผนวกเป็น subcommand `bwoc serve` ใน framework แทน standalone — ดู Q ข้อ 5
 

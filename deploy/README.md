@@ -60,11 +60,11 @@ tailnet devices only. Add it to the app:
 # ~/.config/bwoc-control-center/hosts.toml
 [[host]]
 name = "anna"
-url = "https://<mac-hostname>.tail32ca95.ts.net:10130"
+url = "https://<host>.<tailnet>.ts.net:10130"
 
 [[host]]
 name = "busaba"
-url = "https://bemindlabs.tail32ca95.ts.net:10130"
+url = "https://<host>.<tailnet>.ts.net:10130"
 ```
 
 ## 5. Verify
