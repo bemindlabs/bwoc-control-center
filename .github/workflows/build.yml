@@ -10,6 +10,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Read-only: these jobs build and test; none of them writes to the repo.
+permissions:
+  contents: read
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true

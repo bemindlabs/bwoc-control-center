@@ -196,6 +196,12 @@ fn verify_against_key(
     body: &[u8],
     now_epoch: i64,
 ) -> Result<(), Refusal> {
+    // A missing `x-bwoc-nonce` header reaches here as "". Refuse it outright:
+    // the nonce is what makes a signed request single-use, and an empty one
+    // would let every nonce-less request share a single replay slot.
+    if h.nonce.is_empty() {
+        return Err(Refusal::MalformedHeaders);
+    }
     let actual = sha256_hex(body);
     if actual != h.body_sha256.to_lowercase() {
         return Err(Refusal::BodyHashMismatch);
@@ -272,6 +278,30 @@ mod tests {
             signature: &sig,
         };
         assert!(verify(&reg, &nonces, &h, "GET", "/fleet", b"", now).is_ok());
+    }
+
+    #[test]
+    fn empty_nonce_refused_even_when_correctly_signed() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let reg = registry_with("ctrl-1", &key);
+        let nonces = NonceStore::default();
+        let (now, ts) = now_and_ts();
+        // The signature is genuine over an empty nonce, so only the explicit
+        // check can refuse it.
+        // What a missing header becomes: `HeaderMap::get(..)` → `None` → empty.
+        let nonce = String::new();
+        let (body_hash, sig) = sign(&key, "ctrl-1", "GET", "/fleet", &nonce, &ts, b"");
+        let h = SignedHeaders {
+            sender: "ctrl-1",
+            nonce: &nonce,
+            ts: &ts,
+            body_sha256: &body_hash,
+            signature: &sig,
+        };
+        assert_eq!(
+            verify(&reg, &nonces, &h, "GET", "/fleet", b"", now),
+            Err(Refusal::MalformedHeaders)
+        );
     }
 
     #[test]
