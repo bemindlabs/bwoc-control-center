@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only: these jobs build and test; none of them writes to the repo.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
