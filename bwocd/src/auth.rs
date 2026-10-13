@@ -288,10 +288,12 @@ mod tests {
         let (now, ts) = now_and_ts();
         // The signature is genuine over an empty nonce, so only the explicit
         // check can refuse it.
-        let (body_hash, sig) = sign(&key, "ctrl-1", "GET", "/fleet", "", &ts, b"");
+        // What a missing header becomes: `HeaderMap::get(..)` → `None` → empty.
+        let nonce = String::new();
+        let (body_hash, sig) = sign(&key, "ctrl-1", "GET", "/fleet", &nonce, &ts, b"");
         let h = SignedHeaders {
             sender: "ctrl-1",
-            nonce: "",
+            nonce: &nonce,
             ts: &ts,
             body_sha256: &body_hash,
             signature: &sig,
