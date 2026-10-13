@@ -24,7 +24,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -57,7 +57,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -76,6 +76,9 @@ jobs:
   android:
     name: Android
     runs-on: ubuntu-latest
+    env:
+      # One source of truth: the install step and NDK_HOME must name the same NDK.
+      NDK_VERSION: 27.0.12077973
     steps:
       # A universal debug APK for four ABIs outgrows the runner's free disk
       # ("No space left on device" in :app:packageUniversalDebug). Drop
@@ -90,7 +93,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - uses: actions/setup-java@v4
         with:
@@ -98,7 +101,7 @@ jobs:
           java-version: 17
       - uses: android-actions/setup-android@v4
       - name: Install NDK
-        run: sdkmanager "ndk;27.0.12077973"
+        run: sdkmanager "ndk;${NDK_VERSION}"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
@@ -112,7 +115,7 @@ jobs:
           [ -d src-tauri/gen/android ] || pnpm tauri android init --ci
       - name: Build (unsigned debug APK)
         env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
         run: pnpm tauri android build --apk --debug
       - uses: actions/upload-artifact@v4
         with:

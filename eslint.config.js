@@ -9,6 +9,11 @@ export default tseslint.config(
   {
     files: ["src/**/*.{ts,tsx}"],
     plugins: { "react-hooks": reactHooks },
-    rules: { ...reactHooks.configs.recommended.rules },
+    // The two classic hook rules, named explicitly: v7's `recommended` also turns on
+    // the React Compiler rule set, which this codebase has not adopted.
+    rules: {
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "warn",
+    },
   },
 );
