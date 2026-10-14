@@ -5,7 +5,35 @@
 //! (cc-signing — the SAME canonicalizer bwocd verifies with) and talks to a
 //! `bwocd` over the tailnet. The frontend never knows which one served it.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+
+/// One HTTP client for the whole process. `Transport::resolve` builds a fresh
+/// `RemoteHttp` per command, so a per-request `Client::new()` would throw away
+/// connection pooling / keep-alive on every poll and chat turn. Timeouts are
+/// set per request.
+fn http() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
+
+/// (host base URL, controller id) pairs that already POSTed `/enroll` in this
+/// process. Polling hits 401 every cycle while approval is pending; re-posting
+/// each time would just rewrite the host's pending.toml and spam its log.
+fn enrolled_hosts() -> &'static Mutex<HashSet<String>> {
+    static ENROLLED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    ENROLLED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Split `/path?query` into the pieces cc-signing canonicalizes, so the signed
+/// path matches what bwocd reconstructs (it sorts the query).
+fn split_query(path: &str) -> (&str, Option<&str>) {
+    match path.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (path, None),
+    }
+}
 
 pub enum Transport {
     Local(LocalShell),
@@ -172,10 +200,11 @@ pub struct RemoteHttp {
 }
 
 impl RemoteHttp {
-    /// Signed GET against bwocd; `path` must start with '/' and carry no query
-    /// (extend with cc_signing::canonical_path sorting when queries appear).
+    /// Signed GET against bwocd; `path` must start with '/' and may carry a
+    /// query (signed in bwocd's canonical, sorted form).
     pub async fn get_json(&self, path: &str) -> Result<serde_json::Value, String> {
-        let canonical = cc_signing::canonical_path(path, None);
+        let (pathname, query) = split_query(path);
+        let canonical = cc_signing::canonical_path(pathname, query);
         let headers = cc_signing::build_signed_headers(
             &self.controller.id,
             &self.controller.seed_hex,
@@ -183,8 +212,7 @@ impl RemoteHttp {
             &canonical,
             b"",
         )?;
-        let client = reqwest::Client::new();
-        let mut req = client.get(format!("{}{}", self.base, path));
+        let mut req = http().get(format!("{}{}", self.base, path));
         for (k, v) in headers {
             req = req.header(k, v);
         }
@@ -195,9 +223,20 @@ impl RemoteHttp {
             .map_err(|e| format!("bwocd unreachable: {e}"))?;
         let status = res.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            // Not trusted yet → self-enroll (best-effort) and tell the user to
-            // approve. The next poll succeeds once the operator promotes us.
-            let enrolled = self.enroll().await.is_ok();
+            // Not trusted yet → self-enroll (best-effort, once per host per
+            // process) and tell the user to approve. The next poll succeeds
+            // once the operator promotes us.
+            let key = format!("{}|{}", self.base, self.controller.id);
+            let already = enrolled_hosts()
+                .lock()
+                .map(|s| s.contains(&key))
+                .unwrap_or(false);
+            let enrolled = already || self.enroll().await.is_ok();
+            if enrolled && !already {
+                if let Ok(mut s) = enrolled_hosts().lock() {
+                    s.insert(key);
+                }
+            }
             return Err(if enrolled {
                 format!(
                     "awaiting approval — controller '{}' requested access to this host",
@@ -234,8 +273,7 @@ impl RemoteHttp {
             &canonical,
             body.as_bytes(),
         )?;
-        let client = reqwest::Client::new();
-        let mut req = client
+        let mut req = http()
             .post(format!("{}/enroll", self.base))
             .header("content-type", "application/json")
             .body(body);
@@ -256,7 +294,8 @@ impl RemoteHttp {
 
     /// Signed DELETE against bwocd (e.g. retire an agent). No body.
     pub async fn delete_json(&self, path: &str) -> Result<serde_json::Value, String> {
-        let canonical = cc_signing::canonical_path(path, None);
+        let (pathname, query) = split_query(path);
+        let canonical = cc_signing::canonical_path(pathname, query);
         let headers = cc_signing::build_signed_headers(
             &self.controller.id,
             &self.controller.seed_hex,
@@ -264,8 +303,7 @@ impl RemoteHttp {
             &canonical,
             b"",
         )?;
-        let client = reqwest::Client::new();
-        let mut req = client.delete(format!("{}{}", self.base, path));
+        let mut req = http().delete(format!("{}{}", self.base, path));
         for (k, v) in headers {
             req = req.header(k, v);
         }
@@ -293,7 +331,8 @@ impl RemoteHttp {
         timeout_secs: u64,
     ) -> Result<serde_json::Value, String> {
         let body = body.to_string();
-        let canonical = cc_signing::canonical_path(path, None);
+        let (pathname, query) = split_query(path);
+        let canonical = cc_signing::canonical_path(pathname, query);
         let headers = cc_signing::build_signed_headers(
             &self.controller.id,
             &self.controller.seed_hex,
@@ -301,8 +340,7 @@ impl RemoteHttp {
             &canonical,
             body.as_bytes(),
         )?;
-        let client = reqwest::Client::new();
-        let mut req = client
+        let mut req = http()
             .post(format!("{}{}", self.base, path))
             .header("content-type", "application/json")
             .body(body);
@@ -325,8 +363,12 @@ impl RemoteHttp {
     }
 }
 
+/// The user's home dir: `HOME` (Unix), else `USERPROFILE` (Windows).
 fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Load an agent's saved memory (mirrors bwocd's agentmem): the `MEMORY.md`
@@ -382,4 +424,22 @@ pub fn load_agent_memory(workspace: &Path, id: &str) -> Option<String> {
         }
     }
     (!parts.is_empty()).then(|| cap(&parts.join("\n\n")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signed_path_matches_bwocds_canonical_form_with_a_query() {
+        // bwocd canonicalizes `uri.path()` + `uri.query()`; the client must sign
+        // the same thing rather than treating the query as part of the path.
+        let (p, q) = split_query("/agents/x/inbox?b=2&a=1");
+        assert_eq!(p, "/agents/x/inbox");
+        assert_eq!(
+            cc_signing::canonical_path(p, q),
+            cc_signing::canonical_path("/agents/x/inbox", Some("a=1&b=2"))
+        );
+        assert_eq!(split_query("/fleet"), ("/fleet", None));
+    }
 }
