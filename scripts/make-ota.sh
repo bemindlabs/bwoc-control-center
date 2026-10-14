@@ -20,14 +20,20 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 cp "$IPA" "$OUT/app.ipa"
 
 # read identity from the built app — extract the (binary) Info.plist to a real
-# file; piping it through `head`/`printf` mangles binary plists and silently
-# falls back to wrong defaults.
+# file; piping it through `head`/`printf` mangles binary plists. No hardcoded
+# fallbacks: a manifest with the wrong bundle id/version installs nothing, so
+# fail loudly instead. The trap cleans the temp dir on every exit path.
 PL_TMP=$(mktemp -d)
+trap 'rm -rf "$PL_TMP"' EXIT
 unzip -q -o "$IPA" "Payload/*/Info.plist" -d "$PL_TMP"
-PL=$(find "$PL_TMP" -name Info.plist -path "*.app/Info.plist" | head -1)
-BID=$(plutil -extract CFBundleIdentifier raw "$PL" 2>/dev/null || echo "tech.bemind.bwocControlCenter")
-VER=$(plutil -extract CFBundleShortVersionString raw "$PL" 2>/dev/null || echo "0.1.0")
-rm -rf "$PL_TMP"
+# -print -quit, not `| head -1`: head closing the pipe can SIGPIPE find, which
+# pipefail turns into a spurious failure.
+PL=$(find "$PL_TMP" -name Info.plist -path "*.app/Info.plist" -print -quit)
+[ -n "$PL" ] || { echo "error: no Payload/*.app/Info.plist in $IPA" >&2; exit 1; }
+BID=$(plutil -extract CFBundleIdentifier raw -o - "$PL") \
+  || { echo "error: cannot read CFBundleIdentifier from $PL" >&2; exit 1; }
+VER=$(plutil -extract CFBundleShortVersionString raw -o - "$PL") \
+  || { echo "error: cannot read CFBundleShortVersionString from $PL" >&2; exit 1; }
 TITLE="BWOC Control Center"
 
 cat > "$OUT/manifest.plist" <<PLIST
