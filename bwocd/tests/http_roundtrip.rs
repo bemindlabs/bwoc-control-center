@@ -190,3 +190,137 @@ async fn replayed_headers_are_refused() {
     let res2 = bwocd::routes::router(st).oneshot(req2).await.unwrap();
     assert_eq!(res2.status(), StatusCode::UNAUTHORIZED);
 }
+
+// ── /enroll (self-signed, outside the registry middleware) ──────────────────
+
+/// State whose primary workspace is a fresh temp dir, so `/enroll` writes its
+/// own pending.toml without touching other tests.
+fn state_enroll(label: &str) -> (Arc<AppState>, std::path::PathBuf) {
+    let ws = std::env::temp_dir().join(format!("bwocd-enroll-http-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    let st = Arc::new(AppState {
+        workspaces: bwocd::workspaces::Workspaces::single(ws.clone()),
+        registry: auth::ControllerRegistry::from_entries(vec![]).unwrap(),
+        nonces: auth::NonceStore::default(),
+        cors_origin: None,
+        max_concurrency: DEFAULT_MAX_CONCURRENCY,
+    });
+    (st, ws)
+}
+
+/// POST /enroll whose headers are signed by `signer_seed` as `header_id`, with
+/// a body carrying `body_id` + `body_key`.
+fn enroll_request(
+    header_id: &str,
+    signer_seed: [u8; 32],
+    body_id: &str,
+    body_key: &str,
+) -> Request<Body> {
+    let body = serde_json::json!({ "id": body_id, "public_key": body_key }).to_string();
+    let headers = cc_signing::build_signed_headers(
+        header_id,
+        &hex::encode(signer_seed),
+        "POST",
+        &cc_signing::canonical_path("/enroll", None),
+        body.as_bytes(),
+    )
+    .unwrap();
+    let mut req = Request::builder()
+        .uri("/enroll")
+        .method("POST")
+        .header("content-type", "application/json");
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+    req.body(Body::from(body)).unwrap()
+}
+
+fn pubkey(seed: [u8; 32]) -> String {
+    cc_signing::public_key_hex(&hex::encode(seed)).unwrap()
+}
+
+#[tokio::test]
+async fn enroll_valid_self_signed_is_accepted_as_pending() {
+    let (st, ws) = state_enroll("ok");
+    let seed = [7u8; 32];
+    let res = bwocd::routes::router(st)
+        .oneshot(enroll_request(
+            "ctrl-aa11",
+            seed,
+            "ctrl-aa11",
+            &pubkey(seed),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::ACCEPTED);
+    let pending = std::fs::read_to_string(ws.join(".bwoc/bwocd/pending.toml")).unwrap();
+    assert!(pending.contains("ctrl-aa11") && pending.contains(&pubkey(seed)));
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[tokio::test]
+async fn enroll_signed_by_another_key_is_refused() {
+    // Body claims key B but the request is signed with key A → no proof of
+    // ownership of B.
+    let (st, ws) = state_enroll("wrongkey");
+    let res = bwocd::routes::router(st)
+        .oneshot(enroll_request(
+            "ctrl-bb22",
+            [8u8; 32],
+            "ctrl-bb22",
+            &pubkey([9u8; 32]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert!(!ws.join(".bwoc/bwocd/pending.toml").exists());
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[tokio::test]
+async fn enroll_header_body_id_mismatch_is_bad_request() {
+    let (st, ws) = state_enroll("mismatch");
+    let seed = [10u8; 32];
+    let res = bwocd::routes::router(st)
+        .oneshot(enroll_request(
+            "ctrl-cc33",
+            seed,
+            "ctrl-other",
+            &pubkey(seed),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[tokio::test]
+async fn enroll_cannot_swap_the_key_of_a_pending_id() {
+    let (st, ws) = state_enroll("swap");
+    let (victim, attacker) = ([11u8; 32], [12u8; 32]);
+    let first = bwocd::routes::router(st.clone())
+        .oneshot(enroll_request(
+            "ctrl-dd44",
+            victim,
+            "ctrl-dd44",
+            &pubkey(victim),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::ACCEPTED);
+    // Same id, attacker's own (validly self-signed) key → refused, key kept.
+    let second = bwocd::routes::router(st)
+        .oneshot(enroll_request(
+            "ctrl-dd44",
+            attacker,
+            "ctrl-dd44",
+            &pubkey(attacker),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::CONFLICT);
+    let pending = std::fs::read_to_string(ws.join(".bwoc/bwocd/pending.toml")).unwrap();
+    assert!(pending.contains(&pubkey(victim)) && !pending.contains(&pubkey(attacker)));
+    let _ = std::fs::remove_dir_all(&ws);
+}

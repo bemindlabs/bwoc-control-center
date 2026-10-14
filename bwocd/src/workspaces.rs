@@ -71,7 +71,9 @@ impl Workspaces {
     }
 
     /// All workspaces to serve, deduped by path and sorted by name. Always
-    /// includes `primary`; in rooted mode also every `<root>/<child>` that has a
+    /// includes `primary` (even without a `.bwoc/workspace.toml`, so a
+    /// misconfigured primary surfaces as a `bwoc` error instead of a silently
+    /// empty fleet); in rooted mode also every `<root>/<child>` that has a
     /// `.bwoc/workspace.toml`. Scanned fresh on every call (dynamic discovery).
     pub fn discover(&self) -> Vec<WorkspaceRef> {
         let mut out: Vec<WorkspaceRef> = Vec::new();
@@ -87,9 +89,7 @@ impl Workspaces {
             }
         };
 
-        if is_workspace(&self.primary) {
-            push(self.primary.clone());
-        }
+        push(self.primary.clone());
         if let Some(root) = &self.root {
             if let Ok(entries) = std::fs::read_dir(root) {
                 for entry in entries.flatten() {
@@ -192,6 +192,17 @@ mod tests {
         assert_eq!(ws.for_agent("agent-b1"), Some(root.join("beta")));
         assert_eq!(ws.for_agent("agent-a2"), Some(alpha));
         assert_eq!(ws.for_agent("agent-ghost"), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn primary_is_discovered_even_without_workspace_toml() {
+        let root = tmproot("bare-primary");
+        let bare = root.join("bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        let ws = Workspaces::single(bare.clone());
+        let found: Vec<PathBuf> = ws.discover().into_iter().map(|w| w.path).collect();
+        assert_eq!(found, vec![bare], "primary must never silently vanish");
         let _ = std::fs::remove_dir_all(&root);
     }
 

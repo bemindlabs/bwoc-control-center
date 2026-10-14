@@ -211,6 +211,14 @@ async fn enroll(State(state): State<Arc<AppState>>, req: Request) -> Response {
             Err(crate::enroll::RecordError::InvalidId) => {
                 (StatusCode::BAD_REQUEST, "invalid controller id").into_response()
             }
+            Err(crate::enroll::RecordError::KeyMismatch) => {
+                eprintln!("bwocd: ENROLL refused {sender:?} — id already pending with another key");
+                (
+                    StatusCode::CONFLICT,
+                    "controller id already pending with a different key",
+                )
+                    .into_response()
+            }
             Err(crate::enroll::RecordError::Io(e)) => {
                 eprintln!("bwocd: enroll record error: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -389,8 +397,9 @@ struct CreateBody {
     primary_model: String,
     #[serde(default)]
     scope: Option<String>,
-    /// Target workspace by name (from the discovered set). Omit → primary. In
-    /// single-workspace mode this is ignored.
+    /// Target workspace by name (from the discovered set). Omit → primary. An
+    /// unknown name is a 400 — in single-workspace mode only the primary's own
+    /// name resolves.
     #[serde(default)]
     workspace: Option<String>,
 }
@@ -599,10 +608,13 @@ async fn chat(
 }
 
 /// Agent ids are kebab-case (`agent-<name>`): reject anything that could
-/// smuggle CLI flags or path segments into the shell-out.
+/// smuggle CLI flags or path segments into the shell-out. A leading `-` is
+/// refused because the id is a positional CLI argument (`--help` would parse as
+/// a flag — and in single-workspace mode `for_agent` doesn't vet the id).
 fn valid_agent_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
+        && !id.starts_with('-')
         && id
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
@@ -685,6 +697,20 @@ fn required_cap_for(argv: &[String]) -> Option<&'static str> {
     }
 }
 
+/// Audit-log form of a `/cli` argv: the leading verb words only (at most two,
+/// e.g. `task add`, `send agent-x`) plus the arg count. Never the full argv —
+/// trailing args carry message/task text that doesn't belong in the journal.
+/// Debug-formatted so a crafted word can't forge a log line.
+fn cli_log_summary(argv: &[String]) -> String {
+    let words: Vec<&str> = argv
+        .iter()
+        .map(String::as_str)
+        .take_while(|w| !w.starts_with('-'))
+        .take(2)
+        .collect();
+    format!("{:?} +{} arg(s)", words.join(" "), argv.len() - words.len())
+}
+
 /// Reject args that would let a caller escape bwocd's confinement: bwocd sets
 /// `--workspace` itself, so a caller-supplied one (which would retarget a
 /// different workspace, or duplicate-error) is forbidden.
@@ -703,7 +729,7 @@ async fn cli(
     if body.argv.iter().any(|a| arg_is_forbidden(a)) {
         return (
             StatusCode::BAD_REQUEST,
-            "forbidden arg: --workspace is set by bwocd",
+            "forbidden arg: --workspace / -C are set by bwocd",
         )
             .into_response();
     }
@@ -721,7 +747,7 @@ async fn cli(
     }
     eprintln!(
         "bwocd: CLI [{}] tier={cap} by {}",
-        body.argv.join(" "),
+        cli_log_summary(&body.argv),
         caller.id
     );
     // Resolve the target workspace by name (validated against the discovered set)
@@ -749,7 +775,7 @@ async fn cli(
 
 #[cfg(test)]
 mod cli_tests {
-    use super::{arg_is_forbidden, require_cap, required_cap_for};
+    use super::{arg_is_forbidden, cli_log_summary, require_cap, required_cap_for, valid_agent_id};
     use crate::auth::Caller;
 
     fn caller(caps: &[&str]) -> Caller {
@@ -828,6 +854,27 @@ mod cli_tests {
         assert_eq!(required_cap_for(&v("")), None);
         // `task` alone (no sub-verb) is not a known read/write path.
         assert_eq!(required_cap_for(&v("task")), None);
+    }
+
+    #[test]
+    fn agent_id_cannot_be_a_flag() {
+        assert!(valid_agent_id("agent-anna"));
+        assert!(!valid_agent_id("--help"));
+        assert!(!valid_agent_id("-h"));
+        assert!(!valid_agent_id(""));
+        assert!(!valid_agent_id(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn cli_log_omits_message_text() {
+        let line = cli_log_summary(&v("send agent-anna secret plans here"));
+        assert!(line.contains("send agent-anna"), "{line}");
+        assert!(!line.contains("secret"), "{line}");
+        let line = cli_log_summary(&v("run agent-x --task leak-me"));
+        assert!(!line.contains("leak-me"), "{line}");
+        // Debug formatting escapes control chars → no forged log lines.
+        let line = cli_log_summary(&["send\nbwocd: OK".to_string()]);
+        assert!(!line.contains('\n'), "{line}");
     }
 
     #[test]

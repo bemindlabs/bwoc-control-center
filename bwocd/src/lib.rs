@@ -25,7 +25,8 @@ pub struct AppState {
     /// subprocess spawns so a burst (many controllers, or one flooding a valid
     /// key) can't fork-bomb the host or grow unbounded memory. Excess is shed
     /// with 503 rather than queued. `/health` and `/enroll` are outside this
-    /// gate. 0 sheds every signed request (test-only).
+    /// gate. 0 sheds every signed request — the CLI refuses it, so only tests
+    /// construct that.
     pub max_concurrency: usize,
 }
 
