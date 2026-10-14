@@ -36,7 +36,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Trivy
-        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+        # Pinned: the installer script comes from a release tag (not `main`) and
+        # installs that exact version, so CI is reproducible and a change on
+        # trivy's main branch can't run as root here. Bump both together.
+        env:
+          TRIVY_VERSION: v0.74.0
+        run: curl -sfL "https://raw.githubusercontent.com/aquasecurity/trivy/${TRIVY_VERSION}/contrib/install.sh" | sudo sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
       - name: Trivy VA scan (fail on HIGH/CRITICAL)
         run: |
           trivy fs --scanners vuln,secret,misconfig \

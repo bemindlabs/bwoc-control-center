@@ -32,7 +32,7 @@ from Settings; `bwocd` serves the signed API and is deployed on anna + busaba. S
 **device control** (SC01 Plus over USB + bwoc-ball over the xiaozhi-server bridge), and a
 capability-gated **write** path — bwocd's `POST /cli` verb proxy — so remote hosts can drive
 actions, not just read. The iOS app builds and installs OTA on registered devices over the tailnet.
-Next: enable `tailscale serve`, QR + SSO enrollment.
+Next: QR + SSO enrollment.
 
 ## Layout
 

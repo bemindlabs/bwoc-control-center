@@ -106,8 +106,10 @@ fn default_hosts() -> Vec<HostEntry> {
     ]
 }
 
-/// Load the remote host list, falling back to the built-in defaults when
-/// hosts.toml is absent or empty. `dir` is the app's writable config dir.
+/// Load the remote host list, falling back to the built-in defaults only when
+/// hosts.toml is absent. An existing file with no hosts means the user removed
+/// them all — honour that instead of resurrecting the defaults. `dir` is the
+/// app's writable config dir.
 pub fn load_hosts(dir: &Path) -> Result<Vec<HostEntry>, String> {
     migrate_legacy(dir, "hosts.toml");
     let path = dir.join("hosts.toml");
@@ -116,9 +118,6 @@ pub fn load_hosts(dir: &Path) -> Result<Vec<HostEntry>, String> {
     }
     let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let parsed: HostsFile = toml::from_str(&raw).map_err(|e| format!("bad hosts.toml: {e}"))?;
-    if parsed.host.is_empty() {
-        return Ok(default_hosts());
-    }
     Ok(parsed.host)
 }
 
@@ -132,17 +131,19 @@ pub fn save_hosts(dir: &Path, hosts: &[HostEntry]) -> Result<(), String> {
     std::fs::write(dir.join("hosts.toml"), body).map_err(|e| e.to_string())
 }
 
-/// Add or replace a host by name. Validates the name (kebab-case) and URL.
+/// Add or replace a host by name. Validates the name (kebab-case, ≤ 64 chars)
+/// and URL.
 pub fn add_host(dir: &Path, name: &str, url: &str) -> Result<(), String> {
     let name = name.trim();
     let url = url.trim().trim_end_matches('/');
     if name.is_empty()
+        || name.len() > 64
         || name == "local"
         || !name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
-        return Err("name must be lowercase letters/digits/'-' and not 'local'".into());
+        return Err("name must be lowercase letters/digits/'-' (max 64) and not 'local'".into());
     }
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("url must start with https:// (or http://)".into());
@@ -168,4 +169,38 @@ pub fn remove_host(dir: &Path, name: &str) -> Result<(), String> {
         return Err(format!("no host named '{name}'"));
     }
     save_hosts(dir, &hosts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(label: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("cc-config-test-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn removing_every_host_persists_an_empty_list() {
+        let dir = tmp("remove-all");
+        // No file yet → built-in defaults.
+        let defaults = load_hosts(&dir).unwrap();
+        assert!(!defaults.is_empty());
+        for h in &defaults {
+            remove_host(&dir, &h.name).unwrap();
+        }
+        // The defaults must not reappear once the user removed them all.
+        assert!(load_hosts(&dir).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn host_names_are_length_capped() {
+        let dir = tmp("name-cap");
+        assert!(add_host(&dir, &"h".repeat(65), "https://x.example").is_err());
+        add_host(&dir, &"h".repeat(64), "https://x.example").unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

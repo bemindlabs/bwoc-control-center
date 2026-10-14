@@ -52,9 +52,24 @@ struct Args {
     insecure_cors: bool,
 
     /// Max concurrent in-flight signed requests (bounds concurrent `bwoc`
-    /// spawns). Excess is shed with 503. Raise for a larger fleet.
-    #[arg(long, env = "BWOCD_MAX_CONCURRENCY", default_value_t = bwocd::DEFAULT_MAX_CONCURRENCY)]
+    /// spawns). Excess is shed with 503. Raise for a larger fleet. Must be ≥ 1 —
+    /// 0 would shed every signed request.
+    #[arg(
+        long,
+        env = "BWOCD_MAX_CONCURRENCY",
+        default_value_t = bwocd::DEFAULT_MAX_CONCURRENCY,
+        value_parser = parse_max_concurrency
+    )]
     max_concurrency: usize,
+}
+
+/// `--max-concurrency` must be a positive integer: 0 is a self-inflicted outage.
+fn parse_max_concurrency(s: &str) -> Result<usize, String> {
+    match s.parse::<usize>() {
+        Ok(0) => Err("must be at least 1 (0 would refuse every signed request)".into()),
+        Ok(n) => Ok(n),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 #[tokio::main]
@@ -90,6 +105,12 @@ async fn main() -> anyhow::Result<()> {
         args.cors_origin
     };
     if let Some(o) = &cors_origin {
+        // Fail fast on an origin that isn't a valid header value — otherwise the
+        // CORS layer is silently dropped and browser clients fail mysteriously.
+        anyhow::ensure!(
+            o == "*" || axum::http::HeaderValue::from_str(o).is_ok(),
+            "invalid --cors-origin {o:?}: not a valid HTTP header value"
+        );
         eprintln!("bwocd: CORS allow-origin = {o}");
     }
 

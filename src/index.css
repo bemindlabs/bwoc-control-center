@@ -56,6 +56,8 @@
 }
 
 :root {
+  /* UA-styled controls (select, scrollbars) follow the active theme. */
+  color-scheme: light;
   --background: oklch(0.994 0.002 230);
   --foreground: oklch(0.22 0.02 250);
   --card: oklch(1 0 0);
@@ -85,6 +87,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.205 0.014 250);
   --foreground: oklch(0.96 0.005 230);
   --card: oklch(0.245 0.015 250);

@@ -42,13 +42,17 @@ pub enum RecordError {
     Full,
     /// Controller id failed validation (charset/length).
     InvalidId,
+    /// The id is already pending under a *different* public key. The first-seen
+    /// key is kept so a later self-signed request can't swap the key an
+    /// operator is about to approve.
+    KeyMismatch,
     /// Filesystem or TOML (de)serialization failure.
     Io(String),
 }
 
-/// A controller id must be a short kebab/snake token — the same shape bwoc uses
-/// for agent/controller ids. Rejecting anything else keeps `pending.toml`
-/// keys sane and blocks oversized/garbage ids from bloating the file.
+/// A controller id must be 1–64 ASCII letters/digits or `.`, `_`, `-` (upper
+/// and lower case allowed). Rejecting anything else keeps `pending.toml` keys
+/// sane and blocks oversized/garbage ids from bloating the file.
 fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
@@ -57,10 +61,10 @@ fn valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
-/// Record (or refresh) a pending enrollment. Idempotent per id — a controller
-/// that retries while awaiting approval doesn't pile up duplicates. Refuses a
-/// *new* id once the queue is at [`MAX_PENDING`] (flood cap) or if the id is
-/// malformed.
+/// Record a pending enrollment. Idempotent per (id, key) — a controller that
+/// retries while awaiting approval doesn't pile up duplicates. Refuses a *new*
+/// id once the queue is at [`MAX_PENDING`] (flood cap), a malformed id, and a
+/// known id presenting a different key ([`RecordError::KeyMismatch`]).
 pub fn record(
     workspace: &Path,
     id: &str,
@@ -78,8 +82,14 @@ pub fn record(
         PendingFile::default()
     };
 
-    if let Some(e) = file.pending.iter_mut().find(|e| e.id == id) {
-        e.public_key = public_key.to_string();
+    if let Some(e) = file.pending.iter().find(|e| e.id == id) {
+        // Same key → nothing to change (a retry). Different key → refuse: never
+        // replace the key under an operator's pending review.
+        return if e.public_key == public_key {
+            Ok(())
+        } else {
+            Err(RecordError::KeyMismatch)
+        };
     } else {
         // New id: enforce the flood cap before growing the file.
         if file.pending.len() >= MAX_PENDING {
@@ -104,14 +114,15 @@ mod tests {
     use super::*;
 
     fn tmp() -> PathBuf {
-        // Unique per test via nanosecond clock; each gets its own pending.toml.
+        // Unique per test (pid + per-process counter — no clock assumptions);
+        // each gets its own pending.toml.
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let base = std::env::temp_dir().join(format!(
-            "bwocd-enroll-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            "bwocd-enroll-test-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         base
     }
@@ -127,8 +138,34 @@ mod tests {
             record(&ws, "ctrl-overflow", "deadbeef", "t1"),
             Err(RecordError::Full)
         ));
-        // … but an existing pending id can still refresh its key.
-        record(&ws, "ctrl-0", "cafef00d", "t2").unwrap();
+        // … but an existing pending id can still retry with its own key.
+        record(&ws, "ctrl-0", "deadbeef", "t2").unwrap();
+    }
+
+    #[test]
+    fn keeps_first_seen_key_for_a_pending_id() {
+        let ws = tmp();
+        record(&ws, "ctrl-abc123", "aaaa", "t0").unwrap();
+        // A second enrollment for the same id with another key is refused …
+        assert!(matches!(
+            record(&ws, "ctrl-abc123", "bbbb", "t1"),
+            Err(RecordError::KeyMismatch)
+        ));
+        // … and the stored key is still the first one.
+        let raw = std::fs::read_to_string(pending_path(&ws)).unwrap();
+        assert!(raw.contains("aaaa") && !raw.contains("bbbb"), "{raw}");
+        // Retrying with the original key is fine.
+        record(&ws, "ctrl-abc123", "aaaa", "t2").unwrap();
+    }
+
+    #[test]
+    fn empty_pending_file_reads_as_empty_queue() {
+        // approve-controllers.sh truncates pending.toml to "" after approval;
+        // an empty file is a valid (empty) TOML document, not an error.
+        let ws = tmp();
+        std::fs::create_dir_all(pending_path(&ws).parent().unwrap()).unwrap();
+        std::fs::write(pending_path(&ws), "").unwrap();
+        record(&ws, "ctrl-1", "deadbeef", "t0").unwrap();
     }
 
     #[test]

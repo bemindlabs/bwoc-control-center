@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Persistent OTA host: a loopback static server for the iOS install bundle.
-     `tailscale serve --https=10131 http://127.0.0.1:18131` (persisted in
+     `tailscale serve` (https port 10131 → http://127.0.0.1:18131) (persisted in
      tailscaled state) exposes it on the tailnet over HTTPS.
-     Install: see deploy/README.md — fill __HOME__, stage the bundle into
-     __HOME__/.local/share/bwoc-ota, then `launchctl load`. -->
+     Install: see the iOS OTA section of the top-level README.md — fill
+     __HOME__, stage the bundle into __HOME__/.local/share/bwoc-ota, then
+     `launchctl load`. -->
+<plist version="1.0">
 <dict>
     <key>Label</key>
     <string>tech.bemind.bwoc-ota</string>

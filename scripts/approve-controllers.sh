@@ -24,7 +24,14 @@ CONTROLLERS="$DIR/controllers.toml"
 [ -f "$PENDING" ] || { echo "no pending enrollments ($PENDING)"; exit 0; }
 
 python3 - "$PENDING" "$CONTROLLERS" "$LIST" <<'PY'
-import sys, tomllib, pathlib
+import sys, pathlib
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib  # same API, for Python < 3.11
+    except ModuleNotFoundError:
+        sys.exit("error: needs Python 3.11+ (tomllib) or the 'tomli' package")
 pending_path, controllers_path, list_only = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 pending = tomllib.load(open(pending_path, "rb")).get("pending", [])
 if not pending:

@@ -98,6 +98,9 @@ export default function Onboarding({
       <div className="flex justify-end px-5 pt-3">
         <button
           onClick={onDone}
+          // Hidden on the last step — also keep it out of the tab order.
+          disabled={last}
+          aria-hidden={last}
           className={cn(
             "text-sm text-muted-foreground transition-opacity hover:text-foreground",
             last && "pointer-events-none opacity-0",

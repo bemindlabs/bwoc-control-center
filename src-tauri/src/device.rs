@@ -61,10 +61,30 @@ pub struct BallStatus {
 // ─────────────────────────────────────────────────────────────────────────────
 const BALL_BRIDGE: &str = "http://bemindlabs.tail32ca95.ts.net:8003/bwoc/ball";
 
+/// Bridge base URL: `BWOC_BALL_BRIDGE` overrides the built-in default (dev vs
+/// prod server, another tailnet).
+fn ball_bridge() -> String {
+    std::env::var("BWOC_BALL_BRIDGE")
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| BALL_BRIDGE.to_string())
+}
+
+/// The user-facing error for a failed bridge call: its JSON `error`, else the
+/// body text, else (empty body) the HTTP status.
+fn bridge_error(status: reqwest::StatusCode, txt: String) -> String {
+    serde_json::from_str::<serde_json::Value>(&txt)
+        .ok()
+        .and_then(|v| v["error"].as_str().map(String::from))
+        .or_else(|| (!txt.trim().is_empty()).then(|| txt.trim().to_string()))
+        .unwrap_or_else(|| format!("ball bridge returned {status}"))
+}
+
 async fn ball_control(component: &str, value: &serde_json::Value) -> Result<(), String> {
     let body = serde_json::json!({ "component": component, "value": value });
     let res = reqwest::Client::new()
-        .post(format!("{BALL_BRIDGE}/control"))
+        .post(format!("{}/control", ball_bridge()))
         .json(&body)
         .timeout(std::time::Duration::from_secs(10))
         .send()
@@ -73,17 +93,15 @@ async fn ball_control(component: &str, value: &serde_json::Value) -> Result<(), 
     if res.status().is_success() {
         return Ok(());
     }
+    let status = res.status();
     let txt = res.text().await.unwrap_or_default();
-    Err(serde_json::from_str::<serde_json::Value>(&txt)
-        .ok()
-        .and_then(|v| v["error"].as_str().map(String::from))
-        .unwrap_or(txt))
+    Err(bridge_error(status, txt))
 }
 
 async fn ball_status() -> BallStatus {
     let mut st = BallStatus::default();
     let Ok(res) = reqwest::Client::new()
-        .get(format!("{BALL_BRIDGE}/status"))
+        .get(format!("{}/status", ball_bridge()))
         .timeout(std::time::Duration::from_secs(8))
         .send()
         .await
@@ -604,6 +622,11 @@ mod imp {
             serde_json::Value::String(s) => s.clone(),
             other => other.to_string(),
         };
+        // The console is line-based: a CR/LF in the value would inject extra
+        // commands after ours.
+        if v.contains(['\r', '\n']) {
+            return Err("value must be a single line".into());
+        }
         let cmd = match component.as_str() {
             "face" | "emotion" => format!("FACE {}", face_expr(&v)),
             "say" | "tts_test" => format!("SAY {v}"),
@@ -642,7 +665,18 @@ mod imp {
                 .find(|l| l.starts_with("<<OK") || l.starts_with("<<ERR"))
             {
                 Some(l) if l.starts_with("<<OK") => Ok(()),
-                Some(l) => Err(l.trim_start_matches("<<ERR ").trim().to_string()),
+                Some(l) => {
+                    // `<<ERR msg`, `<<ERR:msg` or a bare `<<ERR`.
+                    let msg = l
+                        .trim_start_matches("<<ERR")
+                        .trim_start_matches([':', ' '])
+                        .trim();
+                    Err(if msg.is_empty() {
+                        "device reported an error".to_string()
+                    } else {
+                        msg.to_string()
+                    })
+                }
                 None => Err("no reply from device".into()),
             }
         })
@@ -753,3 +787,28 @@ mod imp {
 }
 
 pub use imp::*;
+
+#[cfg(test)]
+mod tests {
+    use super::bridge_error;
+    use reqwest::StatusCode;
+
+    #[test]
+    fn bridge_error_falls_back_to_status_on_empty_body() {
+        assert_eq!(
+            bridge_error(StatusCode::BAD_GATEWAY, String::new()),
+            "ball bridge returned 502 Bad Gateway"
+        );
+        assert_eq!(
+            bridge_error(
+                StatusCode::BAD_REQUEST,
+                r#"{"error":"bad component"}"#.into()
+            ),
+            "bad component"
+        );
+        assert_eq!(
+            bridge_error(StatusCode::BAD_REQUEST, "plain text".into()),
+            "plain text"
+        );
+    }
+}

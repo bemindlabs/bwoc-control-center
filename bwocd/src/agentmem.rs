@@ -2,8 +2,8 @@
 //!
 //! `bwoc run` (and the harness) load the agent's PERSONA (AGENTS.md) but not
 //! its Tier-1 memory files, and many agents have no `deepMemoryCmd` (Tier-2).
-//! So before a chat turn we read the agent's `memories/` and, when configured,
-//! run its deep-memory wake-up, and inject the result as context.
+//! So before a chat turn we read the agent's Tier-1 `memories/` files and inject
+//! them as context. (A Tier-2 deep-memory wake-up is not run here.)
 
 use std::path::Path;
 

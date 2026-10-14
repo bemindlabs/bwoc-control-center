@@ -16,8 +16,15 @@ fi
 [ -d "$APP" ] || { echo "error: $APP not found" >&2; exit 1; }
 
 VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$APP/Contents/Info.plist")
-OUT="src-tauri/target/release/bundle/dmg/BWOC-Control-Center_${VERSION}_aarch64.dmg"
+# Name the dmg for the arch it was built on (tauri's naming: aarch64 / x64).
+case "$(uname -m)" in
+  arm64|aarch64) ARCH=aarch64 ;;
+  x86_64) ARCH=x64 ;;
+  *) ARCH=$(uname -m) ;;
+esac
+OUT="src-tauri/target/release/bundle/dmg/BWOC-Control-Center_${VERSION}_${ARCH}.dmg"
 STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT   # cleaned even if hdiutil fails
 mkdir -p "$(dirname "$OUT")"
 
 cp -R "$APP" "$STAGE/"
@@ -30,5 +37,4 @@ hdiutil create \
   -fs HFS+ -format UDZO -ov \
   "$OUT" >/dev/null
 
-rm -rf "$STAGE"
 echo "→ $OUT"

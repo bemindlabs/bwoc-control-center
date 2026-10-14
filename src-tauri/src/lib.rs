@@ -91,10 +91,7 @@ async fn agent_inbox(
     workspace: Option<String>,
     agent: String,
 ) -> Result<serde_json::Value, String> {
-    if !agent
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    {
+    if !valid_agent_id(&agent) {
         return Err("invalid agent id".into());
     }
     match Transport::resolve(&cfg_dir(&app)?, host, workspace)? {
@@ -112,6 +109,13 @@ fn valid_agent_id(id: &str) -> bool {
         && id
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Bare agent name for `bwoc new` — an id-shaped token capped at 48 chars so the
+/// resulting `agent-<name>` id stays within the 64-char id limit (matches
+/// bwocd's `valid_agent_name`).
+fn valid_agent_name(name: &str) -> bool {
+    name.len() <= 48 && valid_agent_id(name)
 }
 
 fn valid_backend(b: &str) -> bool {
@@ -137,8 +141,8 @@ async fn agent_create(
     scope: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let name = name.trim();
-    if !valid_agent_id(name) {
-        return Err("name must be lowercase letters/digits/'-'".into());
+    if !valid_agent_name(name) {
+        return Err("name must be lowercase letters/digits/'-' (max 48)".into());
     }
     if !valid_backend(&backend) {
         return Err("invalid backend".into());
@@ -266,10 +270,7 @@ async fn chat_send(
     agent: String,
     prompt: String,
 ) -> Result<String, String> {
-    if !agent
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    {
+    if !valid_agent_id(&agent) {
         return Err("invalid agent id".into());
     }
     if prompt.trim().is_empty() {
@@ -300,14 +301,22 @@ async fn chat_send(
     Ok(clean_agent_output(out["output"].as_str().unwrap_or("")))
 }
 
-/// `bwoc run` output is the full harness stdout: startup banner, then
-/// `done in N turn(s).`, then the agent's final response. Keep only the
-/// response. Falls back to the trimmed raw text if the marker is absent.
+/// `bwoc run` output is the full harness stdout: startup banner, then a
+/// `done in N turn(s).` line, then the agent's final response. Keep only the
+/// response. The marker is matched as the harness's own *line* (the first one),
+/// so a reply that happens to contain "turn(s)." is never truncated. Falls back
+/// to the trimmed raw text if the marker line is absent.
 fn clean_agent_output(raw: &str) -> String {
-    if let Some(idx) = raw.rfind("turn(s).") {
-        let after = raw[idx + "turn(s).".len()..].trim();
-        if !after.is_empty() {
-            return after.to_string();
+    let mut offset = 0;
+    for line in raw.split_inclusive('\n') {
+        offset += line.len();
+        let l = line.trim();
+        if l.starts_with("done in ") && l.ends_with("turn(s).") {
+            let after = raw[offset..].trim();
+            if !after.is_empty() {
+                return after.to_string();
+            }
+            break;
         }
     }
     raw.trim().to_string()
@@ -338,7 +347,9 @@ async fn run_verb(
         }
         Transport::Remote(r) => {
             let mut body = serde_json::json!({ "argv": argv });
-            if let Some(ws) = ws_name.filter(|s| !s.is_empty() && s != "local") {
+            // A workspace *name* — unrelated to the synthetic "local" host, so a
+            // remote workspace legitimately named "local" must still be sent.
+            if let Some(ws) = ws_name.filter(|s| !s.is_empty()) {
                 body["workspace"] = serde_json::Value::String(ws);
             }
             let v = r.post_json("/cli", body, 30).await?;
@@ -542,4 +553,41 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_id_rejects_empty_flags_and_overlong() {
+        assert!(valid_agent_id("agent-anna"));
+        assert!(!valid_agent_id(""));
+        assert!(!valid_agent_id("-h"));
+        assert!(!valid_agent_id("--json"));
+        assert!(!valid_agent_id("Agent"));
+        assert!(!valid_agent_id("a/b"));
+        assert!(!valid_agent_id(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn agent_name_is_capped_so_the_prefixed_id_fits() {
+        assert!(valid_agent_name(&"a".repeat(48)));
+        assert!(!valid_agent_name(&"a".repeat(49)));
+        assert!(!valid_agent_name("-x"));
+    }
+
+    #[test]
+    fn clean_output_splits_on_the_harness_line_only() {
+        let raw = "banner\nloading…\ndone in 3 turn(s).\n\nThe reply mentions turn(s). twice: turn(s).\nend";
+        assert_eq!(
+            clean_agent_output(raw),
+            "The reply mentions turn(s). twice: turn(s).\nend"
+        );
+        // A reply line that looks like the marker doesn't move the split.
+        let raw = "done in 1 turn(s).\nfirst\ndone in 9 turn(s).\nsecond";
+        assert_eq!(clean_agent_output(raw), "first\ndone in 9 turn(s).\nsecond");
+        // No marker → trimmed raw text.
+        assert_eq!(clean_agent_output("  just text \n"), "just text");
+    }
 }

@@ -26,7 +26,10 @@ async fn run(mut cmd: Command, timeout: Duration, label: &str) -> Result<Output,
         .stderr(Stdio::piped())
         .stdin(Stdio::null())
         .kill_on_drop(true);
-    let child = cmd.spawn().map_err(|e| format!("cannot exec bwoc: {e}"))?;
+    let program = cmd.as_std().get_program().to_string_lossy().into_owned();
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("cannot exec {program}: {e}"))?;
     match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Ok(Ok(out)) => Ok(out),
         Ok(Err(e)) => Err(format!("bwoc I/O error: {e}")),
@@ -70,7 +73,8 @@ pub struct CliOutput {
 /// can't retarget a different workspace, and enforces a server-side `timeout_secs`
 /// ceiling so an exec verb can't run unbounded. A non-zero exit is returned in
 /// `CliOutput` (not an `Err`) so the caller can inspect stderr/exit_code; `Err`
-/// is reserved for a failure to *spawn* bwoc or a timeout.
+/// means bwoc could not be spawned, timed out, or failed with an I/O error
+/// while its output was being collected.
 pub async fn bwoc_exec(
     workspace: &Path,
     argv: &[String],
@@ -105,5 +109,12 @@ mod tests {
             "hello-from-child",
             "stdout must be captured, not inherited"
         );
+    }
+
+    #[tokio::test]
+    async fn spawn_error_names_the_actual_program() {
+        let cmd = Command::new("bwocd-no-such-binary-xyz");
+        let err = run(cmd, Duration::from_secs(5), "test").await.unwrap_err();
+        assert!(err.contains("bwocd-no-such-binary-xyz"), "{err}");
     }
 }
