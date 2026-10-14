@@ -80,8 +80,9 @@ function Slider({ label, value, onCommit }: { label: string; value: number; onCo
       <input
         type="range" min={0} max={100} value={v}
         onChange={(e) => setV(Number(e.target.value))}
-        onMouseUp={() => onCommit(v)}
-        onTouchEnd={() => onCommit(v)}
+        // Commit what the input holds now — `v` may not have re-rendered yet.
+        onMouseUp={(e) => onCommit(Number(e.currentTarget.value))}
+        onTouchEnd={(e) => onCommit(Number(e.currentTarget.value))}
         className="w-full accent-primary"
       />
     </label>
@@ -149,6 +150,8 @@ export default function Devices() {
         {DEVICES.map((d) => (
           <button
             key={d.id}
+            type="button"
+            aria-pressed={id === d.id}
             onClick={() => setId(d.id)}
             className={cn(
               "flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
@@ -163,7 +166,7 @@ export default function Devices() {
       {/* ── identity / status ───────────────────────────── */}
       <Card className="p-4">
         <div className="flex items-center gap-3">
-          <Dot className={st.online ? "bg-emerald-500" : "bg-muted-foreground/40"} />
+          <Dot className={st.online ? "bg-help-resolved" : "bg-muted-foreground/40"} />
           <div className="flex-1">
             <div className="font-mono text-sm font-semibold">{dev.name}</div>
             <div className="text-xs text-muted-foreground">

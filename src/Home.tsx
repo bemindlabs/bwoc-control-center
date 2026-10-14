@@ -108,7 +108,11 @@ export default function Home({
               reachable ? "bg-help-resolved" : "bg-help-open animate-pulse",
             )}
           />
-          {reachable ? `connected · ${activeHost}` : "connecting…"}
+          {reachable
+            ? `connected · ${activeHost}`
+            : error
+              ? `unreachable · ${activeHost}`
+              : "connecting…"}
         </span>
       </header>
 
@@ -172,7 +176,10 @@ export default function Home({
                   {h.url ? h.url.replace(/^https?:\/\//, "") : "this machine"}
                 </span>
               </span>
-              <span className="text-muted-foreground transition-transform group-active:translate-x-0.5">
+              <span
+                aria-hidden
+                className="text-muted-foreground transition-transform group-active:translate-x-0.5"
+              >
                 ›
               </span>
             </button>

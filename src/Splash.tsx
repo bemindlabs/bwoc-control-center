@@ -14,7 +14,7 @@ export default function Splash({
   const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
-    const fade = setTimeout(() => setLeaving(true), durationMs - 400);
+    const fade = setTimeout(() => setLeaving(true), Math.max(0, durationMs - 400));
     const done = setTimeout(onDone, durationMs);
     return () => {
       clearTimeout(fade);

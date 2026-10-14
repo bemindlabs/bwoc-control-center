@@ -160,11 +160,19 @@ export default function Settings({
               controller <span className="font-mono">{controller.id}</span>
             </p>
             <button
-              onClick={() => {
-                navigator.clipboard?.writeText(controller.public_key);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1200);
+              onClick={async () => {
+                // Only claim success once the write actually landed (the API is
+                // absent or permission-gated in some webviews).
+                try {
+                  if (!navigator.clipboard) return;
+                  await navigator.clipboard.writeText(controller.public_key);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1200);
+                } catch {
+                  setCopied(false);
+                }
               }}
+              aria-label="Copy this device's public key"
               className={cn(
                 "mt-2 block w-full break-all rounded-lg border border-border bg-muted/40 p-2.5 text-left font-mono text-[11px] leading-snug",
                 copied ? "text-help-resolved" : "text-muted-foreground",

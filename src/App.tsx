@@ -42,7 +42,16 @@ function AgentRow({ a, onOpen }: { a: AgentEntry; onOpen: (id: string) => void }
   return (
     <tr
       onClick={() => onOpen(a.id)}
-      className="cursor-pointer border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40 active:bg-muted/60"
+      // Rows aren't focusable by default — make the chat target keyboard-reachable.
+      tabIndex={0}
+      aria-label={`Open chat with ${a.id}`}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(a.id);
+        }
+      }}
+      className="cursor-pointer outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40 active:bg-muted/60"
     >
       <td className="px-3 py-2.5 sm:px-4">
         <span className="flex items-center gap-2">
@@ -65,14 +74,15 @@ function AgentRow({ a, onOpen }: { a: AgentEntry; onOpen: (id: string) => void }
   );
 }
 
-/** Group agents by their `workspace` tag (present when the host serves multiple
- *  workspaces). Returns `[name, agents][]` sorted by name. When no agent carries
- *  a workspace (single-workspace host) returns one unlabeled group so the table
- *  renders flat, exactly as before. */
+/** Group agents by their `workspace` tag (bwocd tags every agent). Returns
+ *  `[name, agents][]` sorted by name. With fewer than two distinct workspaces
+ *  (local host, or a single-workspace bwocd) returns one unlabeled group so the
+ *  table renders flat — a lone section header adds nothing. */
 function groupByWorkspace(
   agents: AgentEntry[],
 ): [string | undefined, AgentEntry[]][] {
-  if (!agents.some((a) => a.workspace)) return [[undefined, agents]];
+  const distinct = new Set(agents.map((a) => a.workspace).filter(Boolean));
+  if (distinct.size < 2) return [[undefined, agents]];
   const groups = new Map<string, AgentEntry[]>();
   for (const a of agents) {
     const ws = a.workspace ?? "(unknown)";
@@ -141,7 +151,8 @@ export default function App() {
         // a remote host on mobile).
         setActiveHost((cur) => cur || h[0]?.name || "");
       })
-      .catch(() => {});
+      // Without a host list nothing ever loads — say why instead of a blank UI.
+      .catch((e) => setError(`cannot load hosts: ${String(e)}`));
     invoke<ControllerInfo>("controller_info").then(setController).catch(() => {});
   }, []);
 
@@ -235,6 +246,7 @@ export default function App() {
             <select
               value={activeHost}
               onChange={(e) => setActiveHost(e.target.value)}
+              aria-label="Host"
               className="rounded-lg border border-input bg-card px-2.5 py-1.5 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {hosts.map((h) => (
