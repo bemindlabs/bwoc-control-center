@@ -89,19 +89,15 @@ pub fn load_or_create_controller(dir: &Path) -> Result<Controller, String> {
 /// a user hosts.toml still overrides these.
 fn default_hosts() -> Vec<HostEntry> {
     vec![
-        // Production fleet host (srv1366253, tailnet 100.94.245.64) — listed
-        // first so it is the default host the app (incl. mobile) connects to.
+        // The fleet server — listed first so it is the default host the app
+        // (incl. mobile) connects to. (srv1366253 was retired in 2026-10.)
         HostEntry {
-            name: "prod".into(),
-            url: "https://srv1366253.tail32ca95.ts.net:10130".into(),
+            name: "busaba".into(),
+            url: "https://bemindlabs.tail32ca95.ts.net:10130".into(),
         },
         HostEntry {
             name: "anna".into(),
             url: "https://kla-macbook-spro-16.tail32ca95.ts.net:10130".into(),
-        },
-        HostEntry {
-            name: "busaba".into(),
-            url: "https://bemindlabs.tail32ca95.ts.net:10130".into(),
         },
     ]
 }
@@ -173,6 +169,16 @@ pub fn remove_host(dir: &Path, name: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The app connects to the first built-in host on a fresh install (and on
+    /// mobile, which never has a hosts.toml), so it must be a live server.
+    #[test]
+    fn default_host_is_the_fleet_server_not_the_retired_one() {
+        let hosts = super::default_hosts();
+        assert_eq!(hosts[0].url, "https://bemindlabs.tail32ca95.ts.net:10130");
+        assert!(hosts.iter().all(|h| !h.url.contains("srv1366253")));
+    }
+
     use super::*;
 
     fn tmp(label: &str) -> PathBuf {
